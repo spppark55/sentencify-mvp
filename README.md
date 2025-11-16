@@ -1,19 +1,5 @@
 # yeardream_final
 
-먼저 어디까지 된 상태인지부터 짧게 정리할게요.
-
-* `docker-compose.mini.yml` ✅
-
-  * `api / kafka / mongo / qdrant / redis` 5개 컨테이너 전부 올라가는 상태
-* `api` 이미지 ✅
-
-  * `Dockerfile`, `requirements.txt`, `app/main.py` 기준으로 빌드되고 컨테이너에서 실행 가능
-* `.devcontainer/devcontainer.json` ✅
-
-  * VS Code에서 “Reopen in Container” 하면 `api` 컨테이너 안에서 바로 개발 가능
-
-이제 다른 팀원이 그대로 따라 쓸 수 있게 **README 내용**이랑 **커밋 메시지**를 정리해 줄게요.
-
 ---
 
 ## 1. README.md 내용 (그대로 붙여넣기용)
