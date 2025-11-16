@@ -1,0 +1,2936 @@
+# Project dump from: /Users/ysp/yeardream/sentencify-mvp
+
+
+================================================================================
+FILE: project_dir.py
+================================================================================
+
+import os
+from pathlib import Path
+
+# -------- 설정값 --------
+ROOT_DIR = Path(".").resolve()  # 현재 폴더 기준 루트
+OUTPUT_FILE = Path("project_dir.txt")
+
+# 제외할 디렉토리들
+EXCLUDE_DIRS = {
+    ".git",
+    "__pycache__",
+    ".venv",
+    "venv",
+    ".idea",
+    ".vscode",
+    "node_modules",
+    ".pytest_cache",
+}
+
+# 제외할 확장자들 (이미지, 바이너리 등)
+EXCLUDE_EXTS = {
+    ".png", ".jpg", ".jpeg", ".gif", ".ico",
+    ".pdf", ".zip", ".tar", ".gz",
+    ".db", ".sqlite", ".pyc",
+}
+
+MAX_FILE_CHARS = 20_000   # 파일 하나에서 최대 가져올 문자 수
+MAX_TOTAL_CHARS = 300_000 # 전체 합산 최대 문자 수 (너무 크면 LLM이 못 받음)
+
+# ------------------------
+
+
+def should_skip_dir(path: Path) -> bool:
+    """제외 디렉토리 규칙."""
+    parts = set(path.parts)
+    return any(d in parts for d in EXCLUDE_DIRS)
+
+
+def should_skip_file(path: Path) -> bool:
+    """제외 파일 규칙."""
+    if path.suffix.lower() in EXCLUDE_EXTS:
+        return True
+    return False
+
+
+def is_text_file(path: Path) -> bool:
+    """간단한 방식으로 텍스트/바이너리 구분 (대충이면 충분)."""
+    try:
+        with open(path, "rb") as f:
+            chunk = f.read(1024)
+        # 널바이트가 있으면 대충 바이너리로 간주
+        if b"\x00" in chunk:
+            return False
+        return True
+    except Exception:
+        return False
+
+
+def main():
+    total_chars = 0
+    lines = []
+
+    lines.append(f"# Project dump from: {ROOT_DIR}\n\n")
+
+    for root, dirs, files in os.walk(ROOT_DIR):
+        root_path = Path(root)
+
+        # 제외 디렉토리 필터
+        if should_skip_dir(root_path.relative_to(ROOT_DIR)):
+            dirs[:] = []  # 이 디렉토리 아래는 더 안 내려감
+            continue
+
+        # 하위 탐색 시에도 제외 디렉토리 제거
+        dirs[:] = [d for d in dirs if d not in EXCLUDE_DIRS]
+
+        for filename in files:
+            file_path = root_path / filename
+            rel_path = file_path.relative_to(ROOT_DIR)
+
+            if should_skip_file(file_path):
+                continue
+            if not is_text_file(file_path):
+                continue
+
+            try:
+                text = file_path.read_text(encoding="utf-8", errors="ignore")
+            except Exception:
+                continue
+
+            if not text.strip():
+                continue
+
+            # 파일 당 최대 길이 제한
+            if len(text) > MAX_FILE_CHARS:
+                text = text[:MAX_FILE_CHARS] + "\n\n...[TRUNCATED]...\n"
+
+            block = []
+            block.append("\n" + "=" * 80 + "\n")
+            block.append(f"FILE: {rel_path}\n")
+            block.append("=" * 80 + "\n\n")
+            block.append(text)
+            block.append("\n")
+
+            block_str = "".join(block)
+
+            # 전체 최대 길이 초과하면 중단
+            if total_chars + len(block_str) > MAX_TOTAL_CHARS:
+                lines.append(
+                    "\n\n...[STOPPED: MAX_TOTAL_CHARS reached, remaining files omitted]...\n"
+                )
+                OUTPUT_FILE.write_text("".join(lines), encoding="utf-8")
+                print(f"[+] Written (truncated) to {OUTPUT_FILE}")
+                return
+
+            lines.append(block_str)
+            total_chars += len(block_str)
+
+    OUTPUT_FILE.write_text("".join(lines), encoding="utf-8")
+    print(f"[+] Written to {OUTPUT_FILE} (total_chars={total_chars})")
+
+
+if __name__ == "__main__":
+    main()
+
+
+================================================================================
+FILE: README.md
+================================================================================
+
+# yeardream_final
+
+📘 Sentencify MVP – 로컬 MSA 개발 환경
+
+Sentencify Phase 1(실시간 추천 + 데이터 수집)을 개발하기 위한 로컬 MSA + DevContainer 기반 환경입니다.
+
+FastAPI API 서버는 VS Code DevContainer 안에서 개발하고,
+Kafka / Mongo / Qdrant / Redis 등 인프라는 Docker Compose로 실행합니다.
+
+🚀 1. 사전 준비
+
+팀원이 이 레포를 처음 가져올 때 필요한 것:
+
+Git
+
+Docker Desktop
+
+VS Code
+
+VS Code 확장
+
+Dev Containers (ms-vscode-remote.remote-containers)
+
+🚀 2. 레포 클론
+git clone https://github.com/<USER_OR_ORG>/sentencify-mvp.git
+cd sentencify-mvp
+
+🚀 3. MSA 인프라 실행 (Docker Compose)
+
+루트 폴더에서 실행:
+
+docker compose -f docker-compose.mini.yml up -d --build
+
+
+이 명령으로 다음 5개 컨테이너가 실행됩니다:
+
+api (FastAPI – DevContainer에서 개발용)
+
+kafka
+
+mongo
+
+qdrant
+
+redis
+
+상태 확인:
+
+docker ps
+
+
+중지:
+
+docker compose -f docker-compose.mini.yml down
+
+🧩 4. FastAPI 개발 (VS Code Dev Container)
+
+FastAPI 코드는 DevContainer 내부에서 실행해야 함
+(로컬 Python 환경을 사용하지 않음)
+
+실행 방법
+
+VSCode에서 sentencify-mvp 폴더를 열기
+
+명령 팔레트 열기
+
+macOS: Cmd + Shift + P
+
+Windows: Ctrl + Shift + P
+
+Dev Containers: Reopen in Container 선택
+
+VS Code가 자동으로 API 컨테이너 환경으로 들어감
+
+🧪 5. FastAPI 서버 실행
+
+DevContainer 안에서 터미널을 열고:
+
+uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+
+브라우저에서 접속:
+
+👉 http://localhost:8000/docs
+
+정상적으로 보이면 다음 값이 응답됩니다:
+
+insert_id
+
+recommend_session_id
+
+더미 reco_options 리스트
+
+➡️ 이것이 Phase 1 Step 1 “API 최소 기능” 성공 기준입니다.
+
+📁 디렉터리 구조
+sentencify-mvp/
+├─ api/
+│   ├─ app/
+│   │   └─ main.py
+│   ├─ requirements.txt
+│   └─ Dockerfile
+├─ .devcontainer/
+│   └─ devcontainer.json
+├─ docker-compose.mini.yml
+└─ README.md
+
+📝 DevContainer 관리 규칙
+
+.devcontainer/devcontainer.json 레포에 포함(커밋) 해야 함
+
+이유: 팀원이 Reopen in Container만 하면 동일한 개발 환경을 자동 복원
+
+일반적으로 .gitignore에 넣지 않음
+
+🎯 Phase 1 진행 상황 요약
+✔ 현재 이 레포로 가능한 것
+
+Step 0: MSA 인프라 구축 완료
+
+Step 1: FastAPI 기본 스켈레톤 동작
+
+개발 환경 자동화(DevContainer) 완성
+
+🔜 다음 해야 할 일
+
+P_rule / P_vec 실제 로직 구현
+
+Kafka Producer/Consumer 코드 추가
+
+FE와 B/C 이벤트 스키마 확정 및 연동
+
+📄 기술 로드맵
+
+긴 Phase 1 로드맵(기술 아키텍처, Step 0~5)은 별도 문서로 분리되었습니다.
+
+👉 docs/phase1-roadmap.md (추가 예정)
+
+================================================================================
+FILE: .gitignore
+================================================================================
+
+__pycache__/
+*.pyc
+.env
+.env.*
+.idea/
+.vscode/
+*.log
+*.db
+*.sqlite
+venv/
+.venv/
+
+
+================================================================================
+FILE: project_dir.txt
+================================================================================
+
+# Project dump from: /Users/ysp/yeardream/sentencify-mvp
+
+
+================================================================================
+FILE: project_dir.py
+================================================================================
+
+import os
+from pathlib import Path
+
+# -------- 설정값 --------
+ROOT_DIR = Path(".").resolve()  # 현재 폴더 기준 루트
+OUTPUT_FILE = Path("project_dir.txt")
+
+# 제외할 디렉토리들
+EXCLUDE_DIRS = {
+    ".git",
+    "__pycache__",
+    ".venv",
+    "venv",
+    ".idea",
+    ".vscode",
+    "node_modules",
+    ".pytest_cache",
+}
+
+# 제외할 확장자들 (이미지, 바이너리 등)
+EXCLUDE_EXTS = {
+    ".png", ".jpg", ".jpeg", ".gif", ".ico",
+    ".pdf", ".zip", ".tar", ".gz",
+    ".db", ".sqlite", ".pyc",
+}
+
+MAX_FILE_CHARS = 20_000   # 파일 하나에서 최대 가져올 문자 수
+MAX_TOTAL_CHARS = 300_000 # 전체 합산 최대 문자 수 (너무 크면 LLM이 못 받음)
+
+# ------------------------
+
+
+def should_skip_dir(path: Path) -> bool:
+    """제외 디렉토리 규칙."""
+    parts = set(path.parts)
+    return any(d in parts for d in EXCLUDE_DIRS)
+
+
+def should_skip_file(path: Path) -> bool:
+    """제외 파일 규칙."""
+    if path.suffix.lower() in EXCLUDE_EXTS:
+        return True
+    return False
+
+
+def is_text_file(path: Path) -> bool:
+    """간단한 방식으로 텍스트/바이너리 구분 (대충이면 충분)."""
+    try:
+        with open(path, "rb") as f:
+            chunk = f.read(1024)
+        # 널바이트가 있으면 대충 바이너리로 간주
+        if b"\x00" in chunk:
+            return False
+        return True
+    except Exception:
+        return False
+
+
+def main():
+    total_chars = 0
+    lines = []
+
+    lines.append(f"# Project dump from: {ROOT_DIR}\n\n")
+
+    for root, dirs, files in os.walk(ROOT_DIR):
+        root_path = Path(root)
+
+        # 제외 디렉토리 필터
+        if should_skip_dir(root_path.relative_to(ROOT_DIR)):
+            dirs[:] = []  # 이 디렉토리 아래는 더 안 내려감
+            continue
+
+        # 하위 탐색 시에도 제외 디렉토리 제거
+        dirs[:] = [d for d in dirs if d not in EXCLUDE_DIRS]
+
+        for filename in files:
+            file_path = root_path / filename
+            rel_path = file_path.relative_to(ROOT_DIR)
+
+            if should_skip_file(file_path):
+                continue
+            if not is_text_file(file_path):
+                continue
+
+            try:
+                text = file_path.read_text(encoding="utf-8", errors="ignore")
+            except Exception:
+                continue
+
+            if not text.strip():
+                continue
+
+            # 파일 당 최대 길이 제한
+            if len(text) > MAX_FILE_CHARS:
+                text = text[:MAX_FILE_CHARS] + "\n\n...[TRUNCATED]...\n"
+
+            block = []
+            block.append("\n" + "=" * 80 + "\n")
+            block.append(f"FILE: {rel_path}\n")
+            block.append("=" * 80 + "\n\n")
+            block.append(text)
+            block.append("\n")
+
+            block_str = "".join(block)
+
+            # 전체 최대 길이 초과하면 중단
+            if total_chars + len(block_str) > MAX_TOTAL_CHARS:
+                lines.append(
+                    "\n\n...[STOPPED: MAX_TOTAL_CHARS reached, remaining files omitted]...\n"
+                )
+                OUTPUT_FILE.write_text("".join(lines), encoding="utf-8")
+                print(f"[+] Written (truncated) to {OUTPUT_FILE}")
+                return
+
+            lines.append(block_str)
+            total_chars += len(block_str)
+
+    OUTPUT_FILE.write_text("".join(lines), encoding="utf-8")
+    print(f"[+] Written to {OUTPUT_FILE} (total_chars={total_chars})")
+
+
+if __name__ == "__main__":
+    main()
+
+
+================================================================================
+FILE: README.md
+================================================================================
+
+# yeardream_final
+
+📘 Sentencify MVP – 로컬 MSA 개발 환경
+
+Sentencify Phase 1(실시간 추천 + 데이터 수집)을 개발하기 위한 로컬 MSA + DevContainer 기반 환경입니다.
+
+FastAPI API 서버는 VS Code DevContainer 안에서 개발하고,
+Kafka / Mongo / Qdrant / Redis 등 인프라는 Docker Compose로 실행합니다.
+
+🚀 1. 사전 준비
+
+팀원이 이 레포를 처음 가져올 때 필요한 것:
+
+Git
+
+Docker Desktop
+
+VS Code
+
+VS Code 확장
+
+Dev Containers (ms-vscode-remote.remote-containers)
+
+🚀 2. 레포 클론
+git clone https://github.com/<USER_OR_ORG>/sentencify-mvp.git
+cd sentencify-mvp
+
+🚀 3. MSA 인프라 실행 (Docker Compose)
+
+루트 폴더에서 실행:
+
+docker compose -f docker-compose.mini.yml up -d --build
+
+
+이 명령으로 다음 5개 컨테이너가 실행됩니다:
+
+api (FastAPI – DevContainer에서 개발용)
+
+kafka
+
+mongo
+
+qdrant
+
+redis
+
+상태 확인:
+
+docker ps
+
+
+중지:
+
+docker compose -f docker-compose.mini.yml down
+
+🧩 4. FastAPI 개발 (VS Code Dev Container)
+
+FastAPI 코드는 DevContainer 내부에서 실행해야 함
+(로컬 Python 환경을 사용하지 않음)
+
+실행 방법
+
+VSCode에서 sentencify-mvp 폴더를 열기
+
+명령 팔레트 열기
+
+macOS: Cmd + Shift + P
+
+Windows: Ctrl + Shift + P
+
+Dev Containers: Reopen in Container 선택
+
+VS Code가 자동으로 API 컨테이너 환경으로 들어감
+
+🧪 5. FastAPI 서버 실행
+
+DevContainer 안에서 터미널을 열고:
+
+uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+
+브라우저에서 접속:
+
+👉 http://localhost:8000/docs
+
+정상적으로 보이면 다음 값이 응답됩니다:
+
+insert_id
+
+recommend_session_id
+
+더미 reco_options 리스트
+
+➡️ 이것이 Phase 1 Step 1 “API 최소 기능” 성공 기준입니다.
+
+📁 디렉터리 구조
+sentencify-mvp/
+├─ api/
+│   ├─ app/
+│   │   └─ main.py
+│   ├─ requirements.txt
+│   └─ Dockerfile
+├─ .devcontainer/
+│   └─ devcontainer.json
+├─ docker-compose.mini.yml
+└─ README.md
+
+📝 DevContainer 관리 규칙
+
+.devcontainer/devcontainer.json 레포에 포함(커밋) 해야 함
+
+이유: 팀원이 Reopen in Container만 하면 동일한 개발 환경을 자동 복원
+
+일반적으로 .gitignore에 넣지 않음
+
+🎯 Phase 1 진행 상황 요약
+✔ 현재 이 레포로 가능한 것
+
+Step 0: MSA 인프라 구축 완료
+
+Step 1: FastAPI 기본 스켈레톤 동작
+
+개발 환경 자동화(DevContainer) 완성
+
+🔜 다음 해야 할 일
+
+P_rule / P_vec 실제 로직 구현
+
+Kafka Producer/Consumer 코드 추가
+
+FE와 B/C 이벤트 스키마 확정 및 연동
+
+📄 기술 로드맵
+
+긴 Phase 1 로드맵(기술 아키텍처, Step 0~5)은 별도 문서로 분리되었습니다.
+
+👉 docs/phase1-roadmap.md (추가 예정)
+
+================================================================================
+FILE: .gitignore
+================================================================================
+
+__pycache__/
+*.pyc
+.env
+.env.*
+.idea/
+.vscode/
+*.log
+*.db
+*.sqlite
+venv/
+.venv/
+
+
+================================================================================
+FILE: docker-compose.mini.yml
+================================================================================
+
+version: "3.9"
+
+services:
+  api:
+    build: ./api
+    ports:
+      - "8000:8000"
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
+      MONGO_URI: "mongodb://mongo:27017"
+      QDRANT_HOST: "qdrant"
+      QDRANT_PORT: "6333"
+      REDIS_HOST: "redis"
+    depends_on:
+      - kafka
+      - mongo
+      - qdrant
+      - redis
+    volumes:
+      - ../:/workspace
+    networks:
+      - sentencify-net
+
+  kafka:
+    image: apache/kafka:latest
+    ports:
+      - "9092:9092"
+      - "9093:9093"
+    environment:
+      KAFKA_ENABLE_KRAFT: "yes"
+      KAFKA_CFG_PROCESS_ROLES: "broker,controller"
+      KAFKA_CFG_NODE_ID: "1"
+      KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: "1@kafka:9094"
+      KAFKA_CFG_LISTENERS: "PLAINTEXT://:9092,PLAINTEXT_HOST://:9093,CONTROLLER://:9094"
+      KAFKA_CFG_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:9093"
+      KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: "PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT,CONTROLLER:PLAINTEXT"
+      KAFKA_CFG_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_CFG_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
+    volumes:
+      - kafka-data:/bitnami/kafka
+    networks:
+      - sentencify-net
+
+  mongo:
+    image: mongo:6.0
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+    networks:
+      - sentencify-net
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant-data:/qdrant/storage
+    networks:
+      - sentencify-net
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+    networks:
+      - sentencify-net
+
+networks:
+  sentencify-net:
+    driver: bridge
+
+volumes:
+  kafka-data:
+  mongo-data:
+  qdrant-data:
+
+
+================================================================================
+FILE: docs/phase1/phase1-roadmap.md
+================================================================================
+
+이 로드맵은 개발팀 간의 의존성(Dependency)을 최소화하고, "API 개발 → 테스트 데이터 준비 → P_vec 튜닝 → 전체 체인 통합"의 자연스러운 흐름을 따릅니다.
+
+---
+
+## 🗺️ Sentencify Phase 1: 실행 순서 기반 로드맵 (v1.1)
+
+Phase 1의 목표는 **(1) 실시간 추천 (`P_rule`+`P_vec`)**과 **(2) 데이터 수집 체인 (`A-B-C-D-E`)**을 완성하는 것입니다.
+
+### 📍 Step 0: 개발 착수 (Foundation)
+
+모든 개발의 전제 조건이며, 병목 현상을 막기 위해 가장 먼저 완료되어야 합니다.
+
+1. **인프라 구축 (WBS TODO 12)**
+    - `docker-compose.mini.yml`을 완성하고 실행합니다.
+    - **핵심 서비스 5개:** `FastAPI`, `Kafka`, `MongoDB` (D 저장용), `Qdrant` (E 저장용), `Redis` (LLM 캐시용).
+2. **One-Way Door 결정 (WBS TODO 10, 3)**
+    - **임베딩 모델 확정:** `P_vec` 계산에 사용할 `embedding_v1` 모델(예: `all-MiniLM-L6-v2`)을 최종 선택합니다. (이 결정이 Step 3의 작업을 정의합니다)
+    - **LLM 엔드포인트 확정:** `B` 이벤트 컨슈머가 호출할 `Paraphrasing LLM` (예: OpenAI API) 엔드포인트를 확정합니다.
+
+### 📍 Step 1: 실시간 API 핵심 구현 (API-Side)
+
+API 서버가 최소 기능으로 동작하고, 모든 후속 작업(컨슈머, FE)의 기준점을 제공합니다.
+
+1. **API Contract & Logic (TODO 1, 2)**
+    - `POST /recommend` 엔드포인트와 Pydantic 스키마(`Request`/`Response`)를 정의합니다.
+    - `context_full`, `context_hash` 생성 로직을 구현합니다.
+2. **추천 엔진 스텁(Stub) 구현 (TODO 2)**
+    - `P_rule` (규칙 엔진): 하드코딩된 기본값(예: `{"email": 0.5}`)을 반환합니다.
+    - `P_vec` (벡터 검색): Qdrant에 빈 값을 검색하거나 기본값을 반환합니다.
+3. **핵심 ID 생성 및 반환 (TODO 2)**
+    - `insert_id` (UUID)와 `recommend_session_id` (UUID)를 생성하여 `RecommendResponse`에 포함시킵니다.
+4. **A/I/E 이벤트 발행 (TODO 2, 4)**
+    - FE에 `200 OK` 응답을 반환한 직후, **3개 이벤트(A, I, E)를 Kafka로 `produce`*합니다. (Fire-and-Forget)
+
+> [Step 1 완료 기준]POST /recommend 호출 시, (1) 가짜 추천 값과 (2) insert_id, session_id가 반환되며, (3) Kafka 토픽에 A, I, E 이벤트가 쌓입니다.
+> 
+
+### 📍 Step 2: FE-BE 계약 확정 (The Contract)
+
+Step 1이 완료되는 즉시 FE팀과 백엔드팀이 이 계약을 확정하여 병렬 개발을 시작합니다.
+
+1. **API 스키마 고정 (TODO 1)**
+    - Step 1에서 만든 `RecommendRequest` / `RecommendResponse` 스키마를 API 명세서(Swagger/Notion)로 확정합니다.
+2. **FE 역할 정의 (명세서 4.3)**
+    - FE는 다음 3가지 역할을 수행하기로 확정합니다.
+        1. `/recommend` 응답에서 `insert_id`와 `recommend_session_id`를 FE 내부 상태에 저장.
+        2. '실행' 시, 저장된 2개 ID를 포함하여 `B (editor_run_paraphrasing)` 이벤트를 Kafka로 발행.
+        3. '선택' 시, 저장된 2개 ID와 `selected_option_index` 등을 포함하여 `C (editor_selected_paraphrasing)` 이벤트를 Kafka로 발행.
+
+### 📍 Step 3: 테스트 데이터 준비 및 P_vec 고도화
+
+API가 동작하는 동안, `P_vec`의 정확도를 높이기 위한 데이터를 준비하고 로직을 튜닝합니다.
+
+1. **Synthetic DB 생성/적재 (WBS TODO 10)**
+    - `Step 0`에서 확정한 `embedding_v1` 모델로 가상 데이터(Synthetic DB)의 임베딩을 생성합니다.
+    - 이 벡터 데이터(임베딩, `embedding_version: "v1.0"`)를 `Qdrant`에 미리 적재합니다. (명세서 2.3)
+2. **`P_vec` 로직 고도화 (WBS TODO 2)**
+    - `Step 1`에서 만든 `P_vec` 스텁(Stub)을 실제 `Qdrant` 검색 로직으로 교체합니다.
+    - `Synthetic DB`를 기반으로 `P_vec` 점수 계산 로직을 튜닝합니다.
+
+### 📍 Step 4: 비동기 컨슈머 구현 (Data Chain)
+
+`Step 2`의 계약에 따라 FE와 API가 발행할 이벤트를 처리하는 백엔드 로직을 구현합니다.
+
+1. **`E` 컨슈머 구현 (WBS TODO 4)**
+    - `E (context_block)` 토픽을 구독(subscribe)하여 `Qdrant`에 `upsert`합니다. (PK: `context_hash`)
+2. **`B` 컨슈머 구현 (WBS TODO 3)**
+    - `B (editor_run_paraphrasing)` 토픽을 구독합니다.
+    - `Step 0`에서 확정한 `Paraphrasing LLM`을 호출하고, `Redis`에 응답을 캐시합니다.
+3. **`C` 컨슈머 구현 (WBS TODO 8)**
+    - `C (editor_selected_paraphrasing)` 토픽을 구독합니다.
+    - `C.was_accepted == true`인 경우, `MongoDB`에 `D(correction_history)` 문서를 생성(insert)합니다.
+    - (선택적) 생성된 `D._id`를 `C.correction_history_id` 필드에 넣어 다시 Kafka `C-log` 토픽에 발행하거나 BigQuery에 저장합니다. (명세서 4.3 Rule 3)
+
+### 📍 Step 5: E2E 통합 및 Phase 1 완료 (DoD Check)
+
+모든 컴포넌트(FE, API, Consumers)를 통합하고, Phase 1의 공식 완료 조건을 검증합니다.
+
+1. **FE-BE-Consumer 전체 연동**
+    - `Step 2`의 계약대로 FE 개발을 완료하고 전체 시스템을 통합합니다.
+2. **Phase 1 완료 기준 (7개) 검증 (Definition of Done)**
+    - 사용자 시나리오(드래그 → 실행 → 선택)를 1회 수행한 뒤, 아래 7개 항목이 모두 성공하는지 검증합니다.
+    - ✅ **`/recommend` API 300ms 내 응답** (명세서 2.4)
+    - ✅ **`A/I/E` 이벤트가 모두 Kafka에 정상 발행**
+    - ✅ **`E` Consumer가 Qdrant에 context 저장** (WBS TODO 4)
+    - ✅ **`B` Consumer가 LLM 호출 → Redis 저장** (WBS TODO 3)
+    - ✅ **`C` Consumer가 D(correction_history) 생성** (in MongoDB) (WBS TODO 8)
+    - ✅ **`FE`가 `insert_id`/`session_id`를 정상 전달** (B, C 이벤트 Payload 검증)
+    - ✅ **`A→B→C→D→E` 전체 체인이 한 세션에서 끊김 없이 생성됨** (명세서 2.4)
+
+> [Phase 1 완료]
+위 7개 검증 항목이 모두 통과되면, Phase 1의 공식 목표("실시간 추천 + Hooks 수집")가 달성됩니다.
+>
+
+================================================================================
+FILE: .devcontainer/devcontainer.json
+================================================================================
+
+{
+  "name": "sentencify-mvp-dev",
+  "dockerComposeFile": [
+    "../docker-compose.mini.yml"
+  ],
+  "service": "api",
+  "workspaceFolder": "/workspace",
+  
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-toolsai.jupyter",
+        "ms-azuretools.vscode-docker",
+        "batisteo.vscode-django"
+      ]
+    }
+  },
+
+  "postCreateCommand": "pip install --no-cache-dir -r requirements.txt",
+
+  "remoteUser": "root"
+}
+
+
+================================================================================
+FILE: api/requirements.txt
+================================================================================
+
+fastapi
+uvicorn[standard]
+pydantic
+kafka-python
+redis
+qdrant-client
+
+
+================================================================================
+FILE: api/Dockerfile
+================================================================================
+
+FROM python:3.11-slim
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY app ./app
+
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+
+================================================================================
+FILE: api/app/main.py
+================================================================================
+
+from fastapi import FastAPI
+from pydantic import BaseModel
+import uuid
+
+class Context(BaseModel):
+    prev: str | None = None
+    next: str | None = None
+
+class RecommendRequest(BaseModel):
+    doc_id: str
+    user_id: str
+    selected_text: str
+    context: Context
+
+class RecommendOption(BaseModel):
+    category: str
+    strength: str | None = None
+
+class RecommendResponse(BaseModel):
+    insert_id: str
+    recommend_session_id: str
+    reco_options: list[RecommendOption]
+
+app = FastAPI()
+
+@app.post("/recommend", response_model=RecommendResponse)
+async def recommend(req: RecommendRequest):
+    insert_id = str(uuid.uuid4())
+    recommend_session_id = str(uuid.uuid4())
+    options = [
+        RecommendOption(category="thesis", strength="moderate"),
+        RecommendOption(category="email", strength="weak"),
+    ]
+
+    return RecommendResponse(
+        insert_id=insert_id,
+        recommend_session_id=recommend_session_id,
+        reco_options=options,
+    )
+
+
+
+================================================================================
+FILE: docker-compose.mini.yml
+================================================================================
+
+version: "3.9"
+
+services:
+  api:
+    build: ./api
+    ports:
+      - "8000:8000"
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
+      MONGO_URI: "mongodb://mongo:27017"
+      QDRANT_HOST: "qdrant"
+      QDRANT_PORT: "6333"
+      REDIS_HOST: "redis"
+    depends_on:
+      - kafka
+      - mongo
+      - qdrant
+      - redis
+    volumes:
+      - ../:/workspace
+    networks:
+      - sentencify-net
+
+  kafka:
+    image: apache/kafka:latest
+    ports:
+      - "9092:9092"
+      - "9093:9093"
+    environment:
+      KAFKA_ENABLE_KRAFT: "yes"
+      KAFKA_CFG_PROCESS_ROLES: "broker,controller"
+      KAFKA_CFG_NODE_ID: "1"
+      KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: "1@kafka:9094"
+      KAFKA_CFG_LISTENERS: "PLAINTEXT://:9092,PLAINTEXT_HOST://:9093,CONTROLLER://:9094"
+      KAFKA_CFG_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:9093"
+      KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: "PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT,CONTROLLER:PLAINTEXT"
+      KAFKA_CFG_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_CFG_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
+    volumes:
+      - kafka-data:/bitnami/kafka
+    networks:
+      - sentencify-net
+
+  mongo:
+    image: mongo:6.0
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+    networks:
+      - sentencify-net
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant-data:/qdrant/storage
+    networks:
+      - sentencify-net
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+    networks:
+      - sentencify-net
+
+networks:
+  sentencify-net:
+    driver: bridge
+
+volumes:
+  kafka-data:
+  mongo-data:
+  qdrant-data:
+
+
+================================================================================
+FILE: frontend/index.html
+================================================================================
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Vite + React</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
+
+
+================================================================================
+FILE: frontend/tailwind.config.js
+================================================================================
+
+/** @type {import('tailwindcss').Config} */
+
+export default {
+  content: ['./index.html', './src/**/*.{js,jsx,ts,tsx}'],
+  theme: { extend: {} },
+  plugins: [],
+};
+
+
+================================================================================
+FILE: frontend/src-tree.txt
+================================================================================
+
+ PATH Դϴ.
+ Ϸ ȣ 00000035 2EB1:52BAԴϴ.
+SRC
+  App.css
+  App.jsx
+  DebugPanel.jsx
+  Editor.jsx
+  Header.jsx
+  index.css
+  main.jsx
+  OptionPanel.jsx
+  Sidebar.jsx
+  
+assets
+      react.svg
+      
+auth
+      AuthContext.jsx
+      Login.jsx
+      
+utils
+        logger.js
+        mockCorrect.js
+        
+
+
+================================================================================
+FILE: frontend/postcss.config.cjs
+================================================================================
+
+// postcss.config.cjs
+module.exports = {
+  plugins: {
+    tailwindcss: {},
+    autoprefixer: {},
+  },
+};
+
+
+================================================================================
+FILE: frontend/vite.config.js
+================================================================================
+
+// vite.config.js
+import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
+
+export default defineConfig({
+  plugins: [react()],
+  css: {
+    postcss: './postcss.config.cjs',
+  },
+  base: '/sentencifyMVP-teamproject/'
+});
+
+
+================================================================================
+FILE: frontend/README.md
+================================================================================
+
+# React + Vite
+
+This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+
+Currently, two official plugins are available:
+
+- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
+- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+
+## React Compiler
+
+The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+
+## Expanding the ESLint configuration
+
+If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+
+
+================================================================================
+FILE: frontend/package-lock.json
+================================================================================
+
+{
+  "name": "vite-react-starter",
+  "version": "0.0.0",
+  "lockfileVersion": 2,
+  "requires": true,
+  "packages": {
+    "": {
+      "name": "vite-react-starter",
+      "version": "0.0.0",
+      "dependencies": {
+        "react": "^19.2.0",
+        "react-dom": "^19.2.0",
+        "uuid": "^13.0.0"
+      },
+      "devDependencies": {
+        "@eslint/js": "^9.38.0",
+        "@types/react": "^19.2.2",
+        "@types/react-dom": "^19.2.2",
+        "@vitejs/plugin-react": "^5.1.0",
+        "autoprefixer": "^10.4.21",
+        "eslint": "^9.38.0",
+        "eslint-plugin-react-hooks": "^5.2.0",
+        "eslint-plugin-react-refresh": "^0.4.24",
+        "globals": "^16.4.0",
+        "postcss": "^8.5.6",
+        "tailwindcss": "^3.4.18",
+        "vite": "^7.1.12"
+      }
+    },
+    "node_modules/@alloc/quick-lru": {
+      "version": "5.2.0",
+      "resolved": "https://registry.npmjs.org/@alloc/quick-lru/-/quick-lru-5.2.0.tgz",
+      "integrity": "sha512-UrcABB+4bUrFABwbluTIBErXwvbsU/V7TZWfmbgJfbkwiBuziS9gxdODUyuiecfdGQ85jglMW6juS3+z5TsKLw==",
+      "dev": true,
+      "license": "MIT",
+      "engines": {
+        "node": ">=10"
+      },
+      "funding": {
+        "url": "https://github.com/sponsors/sindresorhus"
+      }
+    },
+    "node_modules/@babel/code-frame": {
+      "version": "7.27.1",
+      "resolved": "https://registry.npmjs.org/@babel/code-frame/-/code-frame-7.27.1.tgz",
+      "integrity": "sha512-cjQ7ZlQ0Mv3b47hABuTevyTuYN4i+loJKGeV9flcCgIK37cCXRh+L1bd3iBHlynerhQ7BhCkn2BPbQUL+rGqFg==",
+      "dev": true,
+      "dependencies": {
+        "@babel/helper-validator-identifier": "^7.27.1",
+        "js-tokens": "^4.0.0",
+        "picocolors": "^1.1.1"
+      },
+      "engines": {
+        "node": ">=6.9.0"
+      }
+    },
+    "node_modules/@babel/compat-data": {
+      "version": "7.28.5",
+      "resolved": "https://registry.npmjs.org/@babel/compat-data/-/compat-data-7.28.5.tgz",
+      "integrity": "sha512-6uFXyCayocRbqhZOB+6XcuZbkMNimwfVGFji8CTZnCzOHVGvDqzvitu1re2AU5LROliz7eQPhB8CpAMvnx9EjA==",
+      "dev": true,
+      "engines": {
+        "node": ">=6.9.0"
+      }
+    },
+    "node_modules/@babel/core": {
+      "version": "7.28.5",
+      "resolved": "https://registry.npmjs.org/@babel/core/-/core-7.28.5.tgz",
+      "integrity": "sha512-e7jT4DxYvIDLk1ZHmU/m/mB19rex9sv0c2ftBtjSBv+kVM/902eh0fINUzD7UwLLNR+jU585GxUJ8/EBfAM5fw==",
+      "dev": true,
+      "dependencies": {
+        "@babel/code-frame": "^7.27.1",
+        "@babel/generator": "^7.28.5",
+        "@babel/helper-compilation-targets": "^7.27.2",
+        "@babel/helper-module-transforms": "^7.28.3",
+        "@babel/helpers": "^7.28.4",
+        "@babel/parser": "^7.28.5",
+        "@babel/template": "^7.27.2",
+        "@babel/traverse": "^7.28.5",
+        "@babel/types": "^7.28.5",
+        "@jridgewell/remapping": "^2.3.5",
+        "convert-source-map": "^2.0.0",
+        "debug": "^4.1.0",
+        "gensync": "^1.0.0-beta.2",
+        "json5": "^2.2.3",
+        "semver": "^6.3.1"
+      },
+      "engines": {
+        "node": ">=6.9.0"
+      },
+      "funding": {
+        "type": "opencollective",
+        "url": "https://opencollective.com/babel"
+      }
+    },
+    "node_modules/@babel/generator": {
+      "version": "7.28.5",
+      "resolved": "https://registry.npmjs.org/@babel/generator/-/generator-7.28.5.tgz",
+      "integrity": "sha512-3EwLFhZ38J4VyIP6WNtt2kUdW9dokXA9Cr4IVIFHuCpZ3H8/YFOl5JjZHisrn1fATPBmKKqXzDFvh9fUwHz6CQ==",
+      "dev": true,
+      "dependencies": {
+        "@babel/parser": "^7.28.5",
+        "@babel/types": "^7.28.5",
+        "@jridgewell/gen-mapping": "^0.3.12",
+        "@jridgewell/trace-mapping": "^0.3.28",
+        "jsesc": "^3.0.2"
+      },
+      "engines": {
+        "node": ">=6.9.0"
+      }
+    },
+    "node_modules/@babel/helper-compilation-targets": {
+      "version": "7.27.2",
+      "resolved": "https://registry.npmjs.org/@babel/helper-compilation-targets/-/helper-compilation-targets-7.27.2.tgz",
+      "integrity": "sha512-2+1thGUUWWjLTYTHZWK1n8Yga0ijBz1XAhUXcKy81rd5g6yh7hGqMp45v7cadSbEHc9G3OTv45SyneRN3ps4DQ==",
+      "dev": true,
+      "dependencies": {
+        "@babel/compat-data": "^7.27.2",
+        "@babel/helper-validator-option": "^7.27.1",
+        "browserslist": "^4.24.0",
+        "lru-cache": "^5.1.1",
+        "semver": "^6.3.1"
+      },
+      "engines": {
+        "node": ">=6.9.0"
+      }
+    },
+    "node_modules/@babel/helper-globals": {
+      "version": "7.28.0",
+      "resolved": "https://registry.npmjs.org/@babel/helper-globals/-/helper-globals-7.28.0.tgz",
+      "integrity": "sha512-+W6cISkXFa1jXsDEdYA8HeevQT/FULhxzR99pxphltZcVaugps53THCeiWA8SguxxpSp3gKPiuYfSWopkLQ4hw==",
+      "dev": true,
+      "engines": {
+        "node": ">=6.9.0"
+      }
+    },
+    "node_modules/@babel/helper-module-imports": {
+      "version": "7.27.1",
+      "resolved": "https://registry.npmjs.org/@babel/helper-module-imports/-/helper-module-imports-7.27.1.tgz",
+      "integrity": "sha512-0gSFWUPNXNopqtIPQvlD5WgXYI5GY2kP2cCvoT8kczjbfcfuIljTbcWrulD1CIPIX2gt1wghbDy08yE1p+/r3w==",
+      "dev": true,
+      "dependencies": {
+        "@babel/traverse": "^7.27.1",
+        "@babel/types": "^7.27.1"
+      },
+      "engines": {
+        "node": ">=6.9.0"
+      }
+    },
+    "node_modules/@babel/helper-module-transforms": {
+      "version": "7.28.3",
+      "resolved": "https://registry.npmjs.org/@babel/helper-module-transforms/-/helper-module-transforms-7.28.3.tgz",
+      "integrity": "sha512-gytXUbs8k2sXS9PnQptz5o0QnpLL51SwASIORY6XaBKF88nsOT0Zw9szLqlSGQDP/4TljBAD5y98p2U1fqkdsw==",
+      "dev": true,
+      "dependencies": {
+        "@babel/helper-module-imports": "^7.27.1",
+        "@babel/helper-validator-identifier": "^7.27.1",
+        "@babel/traverse": "^7.28.3"
+      },
+      "engines": {
+        "node": ">=6.9.0"
+      },
+      "peerDependencies": {
+        "@babel/core": "^7.0.0"
+      }
+    },
+    "node_modules/@babel/helper-plugin-utils": {
+      "version": "7.27.1",
+      "resolved": "https://registry.npmjs.org/@babel/helper-plugin-utils/-/helper-plugin-utils-7.27.1.tgz",
+      "integrity": "sha512-1gn1Up5YXka3YYAHGKpbideQ5Yjf1tDa9qYcgysz+cNCXukyLl6DjPXhD3VRwSb8c0J9tA4b2+rHEZtc6R0tlw==",
+      "dev": true,
+      "engines": {
+        "node": ">=6.9.0"
+      }
+    },
+    "node_modules/@babel/helper-string-parser": {
+      "version": "7.27.1",
+      "resolved": "https://registry.npmjs.org/@babel/helper-string-parser/-/helper-string-parser-7.27.1.tgz",
+      "integrity": "sha512-qMlSxKbpRlAridDExk92nSobyDdpPijUq2DW6oDnUqd0iOGxmQjyqhMIihI9+zv4LPyZdRje2cavWPbCbWm3eA==",
+      "dev": true,
+      "engines": {
+        "node": ">=6.9.0"
+      }
+    },
+    "node_modules/@babel/helper-validator-identifier": {
+      "version": "7.28.5",
+      "resolved": "https://registry.npmjs.org/@babel/helper-validator-identifier/-/helper-validator-identifier-7.28.5.tgz",
+      "integrity": "sha512-qSs4ifwzKJSV39ucNjsvc6WVHs6b7S03sOh2OcHF9UHfVPqWWALUsNUVzhSBiItjRZoLHx7nIarVjqKVusUZ1Q==",
+      "dev": true,
+      "engines": {
+        "node": ">=6.9.0"
+      }
+    },
+    "node_modules/@babel/helper-validator-option": {
+      "version": "7.27.1",
+      "resolved": "https://registry.npmjs.org/@babel/helper-validator-option/-/helper-validator-option-7.27.1.tgz",
+      "integrity": "sha512-YvjJow9FxbhFFKDSuFnVCe2WxXk1zWc22fFePVNEaWJEu8IrZVlda6N0uHwzZrUM1il7NC9Mlp4MaJYbYd9JSg==",
+      "dev": true,
+      "engines": {
+        "node": ">=6.9.0"
+      }
+    },
+    "node_modules/@babel/helpers": {
+      "version": "7.28.4",
+      "resolved": "https://registry.npmjs.org/@babel/helpers/-/helpers-7.28.4.tgz",
+      "integrity": "sha512-HFN59MmQXGHVyYadKLVumYsA9dBFun/ldYxipEjzA4196jpLZd8UjEEBLkbEkvfYreDqJhZxYAWFPtrfhNpj4w==",
+      "dev": true,
+      "dependencies": {
+        "@babel/template": "^7.27.2",
+        "@babel/types": "^7.28.4"
+      },
+      "engines": {
+        "node": ">=6.9.0"
+      }
+    },
+    "node_modules/@babel/parser": {
+      "version": "7.28.5",
+      "resolved": "https://registry.npmjs.org/@babel/parser/-/parser-7.28.5.tgz",
+      "integrity": "sha512-KKBU1VGYR7ORr3At5HAtUQ+TV3SzRCXmA/8OdDZiLDBIZxVyzXuztPjfLd3BV1PRAQGCMWWSHYhL0F8d5uHBDQ==",
+      "dev": true,
+      "dependencies": {
+        "@babel/types": "^7.28.5"
+      },
+      "bin": {
+        "parser": "bin/babel-parser.js"
+      },
+      "engines": {
+        "node": ">=6.0.0"
+      }
+    },
+    "node_modules/@babel/plugin-transform-react-jsx-self": {
+      "version": "7.27.1",
+      "resolved": "https://registry.npmjs.org/@babel/plugin-transform-react-jsx-self/-/plugin-transform-react-jsx-self-7.27.1.tgz",
+      "integrity": "sha512-6UzkCs+ejGdZ5mFFC/OCUrv028ab2fp1znZmCZjAOBKiBK2jXD1O+BPSfX8X2qjJ75fZBMSnQn3Rq2mrBJK2mw==",
+      "dev": true,
+      "dependencies": {
+        "@babel/helper-plugin-utils": "^7.27.1"
+      },
+      "engines": {
+        "node": ">=6.9.0"
+      },
+      "peerDependencies": {
+        "@babel/core": "^7.0.0-0"
+      }
+    },
+    "node_modules/@babel/plugin-transform-react-jsx-source": {
+      "version": "7.27.1",
+      "resolved": "https://registry.npmjs.org/@babel/plugin-transform-react-jsx-source/-/plugin-transform-react-jsx-source-7.27.1.tgz",
+      "integrity": "sha512-zbwoTsBruTeKB9hSq73ha66iFeJHuaFkUbwvqElnygoNbj/jHRsSeokowZFN3CZ64IvEqcmmkVe89OPXc7ldAw==",
+      "dev": true,
+      "dependencies": {
+        "@babel/helper-plugin-utils": "^7.27.1"
+      },
+      "engines": {
+        "node": ">=6.9.0"
+      },
+      "peerDependencies": {
+        "@babel/core": "^7.0.0-0"
+      }
+    },
+    "node_modules/@babel/template": {
+      "version": "7.27.2",
+      "resolved": "https://registry.npmjs.org/@babel/template/-/template-7.27.2.tgz",
+      "integrity": "sha512-LPDZ85aEJyYSd18/DkjNh4/y1ntkE5KwUHWTiqgRxruuZL2F1yuHligVHLvcHY2vMHXttKFpJn6LwfI7cw7ODw==",
+      "dev": true,
+      "dependencies": {
+        "@babel/code-frame": "^7.27.1",
+        "@babel/parser": "^7.27.2",
+        "@babel/types": "^7.27.1"
+      },
+      "engines": {
+        "node": ">=6.9.0"
+      }
+    },
+    "node_modules/@babel/traverse": {
+      "version": "7.28.5",
+      "resolved": "https://registry.npmjs.org/@babel/traverse/-/traverse-7.28.5.tgz",
+      "integrity": "sha512-TCCj4t55U90khlYkVV/0TfkJkAkUg3jZFA3Neb7unZT8CPok7iiRfaX0F+WnqWqt7OxhOn0uBKXCw4lbL8W0aQ==",
+      "dev": true,
+      "dependencies": {
+        "@babel/code-frame": "^7.27.1",
+        "@babel/generator": "^7.28.5",
+        "@babel/helper-globals": "^7.28.0",
+        "@babel/parser": "^7.28.5",
+        "@babel/template": "^7.27.2",
+        "@babel/types": "^7.28.5",
+        "debug": "^4.3.1"
+      },
+      "engines": {
+        "node": ">=6.9.0"
+      }
+    },
+    "node_modules/@babel/types": {
+      "version": "7.28.5",
+      "resolved": "https://registry.npmjs.org/@babel/types/-/types-7.28.5.tgz",
+      "integrity": "sha512-qQ5m48eI/MFLQ5PxQj4PFaprjyCTLI37ElWMmNs0K8Lk3dVeOdNpB3ks8jc7yM5CDmVC73eMVk/trk3fgmrUpA==",
+      "dev": true,
+      "dependencies": {
+        "@babel/helper-string-parser": "^7.27.1",
+        "@babel/helper-validator-identifier": "^7.28.5"
+      },
+      "engines": {
+        "node": ">=6.9.0"
+      }
+    },
+    "node_modules/@esbuild/aix-ppc64": {
+      "version": "0.25.12",
+      "resolved": "https://registry.npmjs.org/@esbuild/aix-ppc64/-/aix-ppc64-0.25.12.tgz",
+      "integrity": "sha512-Hhmwd6CInZ3dwpuGTF8fJG6yoWmsToE+vYgD4nytZVxcu1ulHpUQRAB1UJ8+N1Am3Mz4+xOByoQoSZf4D+CpkA==",
+      "cpu": [
+        "ppc64"
+      ],
+      "dev": true,
+      "optional": true,
+      "os": [
+        "aix"
+      ],
+      "engines": {
+        "node": ">=18"
+      }
+    },
+    "node_modules/@esbuild/android-arm": {
+      "version": "0.25.12",
+      "resolved": "https://registry.npmjs.org/@esbuild/android-arm/-/android-arm-0.25.12.tgz",
+      "integrity": "sha512-VJ+sKvNA/GE7Ccacc9Cha7bpS8nyzVv0jdVgwNDaR4gDMC/2TTRc33Ip8qrNYUcpkOHUT5OZ0bUcNNVZQ9RLlg==",
+      "cpu": [
+        "arm"
+      ],
+      "dev": true,
+      "optional": true,
+      "os": [
+        "android"
+      ],
+      "engines": {
+        "node": ">=18"
+      }
+    },
+    "node_modules/@esbuild/android-arm64": {
+      "version": "0.25.12",
+      "resolved": "https://registry.npmjs.org/@esbuild/android-arm64/-/android-arm64-0.25.12.tgz",
+      "integrity": "sha512-6AAmLG7zwD1Z159jCKPvAxZd4y/VTO0VkprYy+3N2FtJ8+BQWFXU+OxARIwA46c5tdD9SsKGZ/1ocqBS/gAKHg==",
+      "cpu": [
+        "arm64"
+      ],
+      "dev": true,
+      "optional": true,
+      "os": [
+        "android"
+      ],
+      "engines": {
+        "node": ">=18"
+      }
+    },
+    "node_modules/@esbuild/android-x64": {
+      "version": "0.25.12",
+      "resolved": "https://registry.npmjs.org/@esbuild/android-x64/-/android-x64-0.25.12.tgz",
+      "integrity": "sha512-5jbb+2hhDHx5phYR2By8GTWEzn6I9UqR11Kwf22iKbNpYrsmRB18aX/9ivc5cabcUiAT/wM+YIZ6SG9QO6a8kg==",
+      "cpu": [
+        "x64"
+      ],
+      "dev": true,
+      "optional": true,
+      "os": [
+        "android"
+      ],
+      "engines": {
+        "node": ">=18"
+      }
+    },
+    "node_modules/@esbuild/darwin-arm64": {
+      "version": "0.25.12",
+      "resolved": "https://registry.npmjs.org/@esbuild/darwin-arm64/-/darwin-arm64-0.25.12.tgz",
+      "integrity": "sha512-N3zl+lxHCifgIlcMUP5016ESkeQjLj/959RxxNYIthIg+CQHInujFuXeWbWMgnTo4cp5XVHqFPmpyu9J65C1Yg==",
+      "cpu": [
+        "arm64"
+      ],
+      "dev": true,
+      "optional": true,
+      "os": [
+        "darwin"
+      ],
+      "engines": {
+        "node": ">=18"
+      }
+    },
+    "node_modules/@esbuild/darwin-x64": {
+      "version": "0.25.12",
+      "resolved": "https://registry.npmjs.org/@esbuild/darwin-x64/-/darwin-x64-0.25.12.tgz",
+      "integrity": "sha512-HQ9ka4Kx21qHXwtlTUVbKJOAnmG1ipXhdWTmNXiPzPfWKpXqASVcWdnf2bnL73wgjNrFXAa3yYvBSd9pzfEIpA==",
+      "cpu": [
+        "x64"
+      ],
+      "dev": true,
+      "optional": true,
+      "os": [
+        "darwin"
+      ],
+      "engines": {
+        "node": ">=18"
+      }
+    },
+    "node_modules/@esbuild/freebsd-arm64": {
+      "version": "0.25.12",
+      "resolved": "https://registry.npmjs.org/@esbuild/freebsd-arm64/-/freebsd-arm64-0.25.12.tgz",
+      "integrity": "sha512-gA0Bx759+7Jve03K1S0vkOu5Lg/85dou3EseOGUes8flVOGxbhDDh/iZaoek11Y8mtyKPGF3vP8XhnkDEAmzeg==",
+      "cpu": [
+        "arm64"
+      ],
+      "dev": true,
+      "optional": true,
+      "os": [
+        "freebsd"
+      ],
+      "engines": {
+        "node": ">=18"
+      }
+    },
+    "node_modules/@esbuild/freebsd-x64": {
+      "version": "0.25.12",
+      "resolved": "https://registry.npmjs.org/@esbuild/freebsd-x64/-/freebsd-x64-0.25.12.tgz",
+      "integrity": "sha512-TGbO26Yw2xsHzxtbVFGEXBFH0FRAP7gtcPE7P5yP7wGy7cXK2oO7RyOhL5NLiqTlBh47XhmIUXuGciXEqYFfBQ==",
+      "cpu": [
+        "x64"
+      ],
+      "dev": true,
+      "optional": true,
+      "os": [
+        "freebsd"
+      ],
+      "engines": {
+        "node": ">=18"
+      }
+    },
+    "node_modules/@esbuild/linux-arm": {
+      "version": "0.25.12",
+      "resolved": "https://registry.npmjs.org/@esbuild/linux-arm/-/linux-arm-0.25.12.tgz",
+      "integrity": "sha512-lPDGyC1JPDou8kGcywY0YILzWlhhnRjdof3UlcoqYmS9El818LLfJJc3PXXgZHrHCAKs/Z2SeZtDJr5MrkxtOw==",
+      "cpu": [
+        "arm"
+      ],
+      "dev": true,
+      "optional": true,
+      "os": [
+        "linux"
+      ],
+      "engines": {
+        "node": ">=18"
+      }
+    },
+    "node_modules/@esbuild/linux-arm64": {
+      "version": "0.25.12",
+      "resolved": "https://registry.npmjs.org/@esbuild/linux-arm64/-/linux-arm64-0.25.12.tgz",
+      "integrity": "sha512-8bwX7a8FghIgrupcxb4aUmYDLp8pX06rGh5HqDT7bB+8Rdells6mHvrFHHW2JAOPZUbnjUpKTLg6ECyzvas2AQ==",
+      "cpu": [
+        "arm64"
+      ],
+      "dev": true,
+      "optional": true,
+      "os": [
+        "linux"
+      ],
+      "engines": {
+        "node": ">=18"
+      }
+    },
+    "node_modules/@esbuild/linux-ia32": {
+      "version": "0.25.12",
+      "resolved": "https://registry.npmjs.org/@esbuild/linux-ia32/-/linux-ia32-0.25.12.tgz",
+      "integrity": "sha512-0y9KrdVnbMM2/vG8KfU0byhUN+EFCny9+8g202gYqSSVMonbsCfLjUO+rCci7pM0WBEtz+oK/PIwHkzxkyharA==",
+      "cpu": [
+        "ia32"
+      ],
+      "dev": true,
+      "optional": true,
+      "os": [
+        "linux"
+      ],
+      "engines": {
+        "node": ">=18"
+      }
+    },
+    "node_modules/@esbuild/linux-loong64": {
+      "version": "0.25.12",
+      "resolved": "https://registry.npmjs.org/@esbuild/linux-loong64/-/linux-loong64-0.25.12.tgz",
+      "integrity": "sha512-h///Lr5a9rib/v1GGqXVGzjL4TMvVTv+s1DPoxQdz7l/AYv6LDSxdIwzxkrPW438oUXiDtwM10o9PmwS/6Z0Ng==",
+      "cpu": [
+        "loong64"
+      ],
+      "dev": true,
+      "optional": true,
+      "os": [
+        "linux"
+      ],
+      "engines": {
+        "node": ">=18"
+      }
+    },
+    "node_modules/@esbuild/linux-mips64el": {
+      "version": "0.25.12",
+      "resolved": "https://registry.npmjs.org/@esbuild/linux-mips64el/-/linux-mips64el-0.25.12.tgz",
+      "integrity": "sha512-iyRrM1Pzy9GFMDLsXn1iHUm18nhKnNMWscjmp4+hpafcZjrr2WbT//d20xaGljXDBYHqRcl8HnxbX6uaA/eGVw==",
+      "cpu": [
+        "mips64el"
+      ],
+      "dev": true,
+      "optional": true,
+      "os": [
+        "linux"
+      ],
+      "engines": {
+        "node": ">=18"
+      }
+    },
+    "node_modules/@esbuild/linux-ppc64": {
+      "version": "0.25.12",
+      "resolved": "https://registry.npmjs.org/@esbuild/linux-ppc64/-/linux-ppc64-0.25.12.tgz",
+      "integrity": "sha512-9meM/lRXxMi5PSUqEXRCtVjEZBGwB7P/D4yT8UG/mwIdze2aV4Vo6U5gD3+RsoHXKkHCfSxZKzmDssVlRj1QQA==",
+      "cpu": [
+        "ppc64"
+      ],
+      "dev": true,
+      "optional": true,
+      "os": [
+        "linux"
+      ],
+      "engines": {
+        "node": ">=18"
+      }
+    },
+    "node_modules/@esbuild/linux-riscv64": {
+      "version": "0.25.12",
+      "resolved": "https://registry.npmjs.org/@esbuild/linux-riscv64/-/linux-riscv64-0.25.12.tgz",
+      "integrity": "sha512-Zr7KR4hgKUpWAwb1f3o5ygT04MzqVrGEGXGLnj15YQDJErYu/BGg+wmFlIDOdJp0PmB0lLvxFIOXZgFRrdjR0w==",
+      "cpu": [
+        "riscv64"
+      ],
+      "dev": true,
+      "optional": true,
+      "os": [
+        "linux"
+      ],
+      "engines": {
+        "node": ">=18"
+      }
+    },
+    "node_modules/@esbuild/linux-s390x": {
+      "version": "0.25.12",
+      "resolved": "https://registry.npmjs.org/@esbuild/linux-s390x/-/linux-s390x-0.25.12.tgz",
+      "integrity": "sha512-MsKncOcgTNvdtiISc/jZs/Zf8d0cl/t3gYWX8J9ubBnVOwlk65UIEEvgBORTiljloIWnBzLs4qhzPkJcitIzIg==",
+      "cpu": [
+        "s390x"
+      ],
+      "dev": true,
+      "optional": true,
+      "os": [
+        "linux"
+      ],
+      "engines": {
+        "node": ">=18"
+      }
+    },
+    "node_modules/@esbuild/linux-x64": {
+      "version": "0.25.12",
+      "resolved": "https://registry.npmjs.org/@esbuild/linux-x64/-/linux-x64-0.25.12.tgz",
+      "integrity": "sha512-uqZMTLr/zR/ed4jIGnwSLkaHmPjOjJvnm6TVVitAa08SLS9Z0VM8wIRx7gWbJB5/J54YuIMInDquWyYvQLZkgw==",
+      "cpu": [
+        "x64"
+      ],
+      "dev": true,
+      "optional": true,
+      "os": [
+        "linux"
+      ],
+      "engines": {
+        "node": ">=18"
+      }
+    },
+    "node_modules/@esbuild/netbsd-arm64": {
+      "version": "0.25.12",
+      "resolved": "https://registry.npmjs.org/@esbuild/netbsd-arm64/-/netbsd-arm64-0.25.12.tgz",
+      "integrity": "sha512-xXwcTq4GhRM7J9A8Gv5boanHhRa/Q9KLVmcyXHCTaM4wKfIpWkdXiMog/KsnxzJ0A1+nD+zoecuzqPmCRyBGjg==",
+      "cpu": [
+        "arm64"
+      ],
+      "dev": true,
+      "optional": true,
+      "os": [
+        "netbsd"
+      ],
+      "engines": {
+        "node": ">=18"
+      }
+    },
+    "node_modules/@esbuild/netbsd-x64": {
+      "version": "0.25.12",
+      "resolved": "https://registry.npmjs.org/@esbuild/netbsd-x64/-/netbsd-x64-0.25.12.tgz",
+      "integrity": "sha512-Ld5pTlzPy3YwGec4OuHh1aCVCRvOXdH8DgRjfDy/oumVovmuSzWfnSJg+VtakB9Cm0gxNO9BzWkj6mtO1FMXkQ==",
+      "cpu": [
+        "x64"
+      ],
+      "dev": true,
+      "optional": true,
+      "os": [
+        "netbsd"
+      ],
+      "engines": {
+        "node": ">=18"
+      }
+    },
+    "node_modules/@esbuild/openbsd-arm64": {
+      "version": "0.25.12",
+      "resolved": "https:/
+
+...[TRUNCATED]...
+
+
+================================================================================
+FILE: frontend/package.json
+================================================================================
+
+{
+  "name": "vite-react-starter",
+  "private": true,
+  "version": "0.0.0",
+  "homepage": "https://mongsil90.github.io/sentencifyMVP-teamproject/",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build --outDir docs",
+    "lint": "eslint .",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "uuid": "^13.0.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.38.0",
+    "@types/react": "^19.2.2",
+    "@types/react-dom": "^19.2.2",
+    "@vitejs/plugin-react": "^5.1.0",
+    "autoprefixer": "^10.4.21",
+    "eslint": "^9.38.0",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "eslint-plugin-react-refresh": "^0.4.24",
+    "globals": "^16.4.0",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^3.4.18",
+    "vite": "^7.1.12"
+  }
+}
+
+
+================================================================================
+FILE: frontend/eslint.config.js
+================================================================================
+
+import js from '@eslint/js'
+import globals from 'globals'
+import reactHooks from 'eslint-plugin-react-hooks'
+import reactRefresh from 'eslint-plugin-react-refresh'
+import { defineConfig, globalIgnores } from 'eslint/config'
+
+export default defineConfig([
+  globalIgnores(['dist']),
+  {
+    files: ['**/*.{js,jsx}'],
+    extends: [
+      js.configs.recommended,
+      reactHooks.configs['recommended-latest'],
+      reactRefresh.configs.vite,
+    ],
+    languageOptions: {
+      ecmaVersion: 2020,
+      globals: globals.browser,
+      parserOptions: {
+        ecmaVersion: 'latest',
+        ecmaFeatures: { jsx: true },
+        sourceType: 'module',
+      },
+    },
+    rules: {
+      'no-unused-vars': ['error', { varsIgnorePattern: '^[A-Z_]' }],
+    },
+  },
+])
+
+
+================================================================================
+FILE: frontend/docs/index.html
+================================================================================
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/sentencifyMVP-teamproject/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Vite + React</title>
+    <script type="module" crossorigin src="/sentencifyMVP-teamproject/assets/index-B2SyZvgb.js"></script>
+    <link rel="stylesheet" crossorigin href="/sentencifyMVP-teamproject/assets/index-Vq2dOF9D.css">
+  </head>
+  <body>
+    <div id="root"></div>
+
+  </body>
+</html>
+
+
+================================================================================
+FILE: frontend/docs/vite.svg
+================================================================================
+
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" aria-hidden="true" role="img" class="iconify iconify--logos" width="31.88" height="32" preserveAspectRatio="xMidYMid meet" viewBox="0 0 256 257"><defs><linearGradient id="IconifyId1813088fe1fbc01fb466" x1="-.828%" x2="57.636%" y1="7.652%" y2="78.411%"><stop offset="0%" stop-color="#41D1FF"></stop><stop offset="100%" stop-color="#BD34FE"></stop></linearGradient><linearGradient id="IconifyId1813088fe1fbc01fb467" x1="43.376%" x2="50.316%" y1="2.242%" y2="89.03%"><stop offset="0%" stop-color="#FFEA83"></stop><stop offset="8.333%" stop-color="#FFDD35"></stop><stop offset="100%" stop-color="#FFA800"></stop></linearGradient></defs><path fill="url(#IconifyId1813088fe1fbc01fb466)" d="M255.153 37.938L134.897 252.976c-2.483 4.44-8.862 4.466-11.382.048L.875 37.958c-2.746-4.814 1.371-10.646 6.827-9.67l120.385 21.517a6.537 6.537 0 0 0 2.322-.004l117.867-21.483c5.438-.991 9.574 4.796 6.877 9.62Z"></path><path fill="url(#IconifyId1813088fe1fbc01fb467)" d="M185.432.063L96.44 17.501a3.268 3.268 0 0 0-2.634 3.014l-5.474 92.456a3.268 3.268 0 0 0 3.997 3.378l24.777-5.718c2.318-.535 4.413 1.507 3.936 3.838l-7.361 36.047c-.495 2.426 1.782 4.5 4.151 3.78l15.304-4.649c2.372-.72 4.652 1.36 4.15 3.788l-11.698 56.621c-.732 3.542 3.979 5.473 5.943 2.437l1.313-2.028l72.516-144.72c1.215-2.423-.88-5.186-3.54-4.672l-25.505 4.922c-2.396.462-4.435-1.77-3.759-4.114l16.646-57.705c.677-2.35-1.37-4.583-3.769-4.113Z"></path></svg>
+
+================================================================================
+FILE: frontend/docs/assets/index-B2SyZvgb.js
+================================================================================
+
+(function(){const U=document.createElement("link").relList;if(U&&U.supports&&U.supports("modulepreload"))return;for(const M of document.querySelectorAll('link[rel="modulepreload"]'))m(M);new MutationObserver(M=>{for(const C of M)if(C.type==="childList")for(const L of C.addedNodes)L.tagName==="LINK"&&L.rel==="modulepreload"&&m(L)}).observe(document,{childList:!0,subtree:!0});function G(M){const C={};return M.integrity&&(C.integrity=M.integrity),M.referrerPolicy&&(C.referrerPolicy=M.referrerPolicy),M.crossOrigin==="use-credentials"?C.credentials="include":M.crossOrigin==="anonymous"?C.credentials="omit":C.credentials="same-origin",C}function m(M){if(M.ep)return;M.ep=!0;const C=G(M);fetch(M.href,C)}})();var ii={exports:{}},_u={};var Sm;function Pv(){if(Sm)return _u;Sm=1;var A=Symbol.for("react.transitional.element"),U=Symbol.for("react.fragment");function G(m,M,C){var L=null;if(C!==void 0&&(L=""+C),M.key!==void 0&&(L=""+M.key),"key"in M){C={};for(var q in M)q!=="key"&&(C[q]=M[q])}else C=M;return M=C.ref,{$$typeof:A,type:m,key:L,ref:M!==void 0?M:null,props:C}}return _u.Fragment=U,_u.jsx=G,_u.jsxs=G,_u}var bm;function ly(){return bm||(bm=1,ii.exports=Pv()),ii.exports}var S=ly(),si={exports:{}},Q={};var _m;function ty(){if(_m)return Q;_m=1;var A=Symbol.for("react.transitional.element"),U=Symbol.for("react.portal"),G=Symbol.for("react.fragment"),m=Symbol.for("react.strict_mode"),M=Symbol.for("react.profiler"),C=Symbol.for("react.consumer"),L=Symbol.for("react.context"),q=Symbol.for("react.forward_ref"),N=Symbol.for("react.suspense"),z=Symbol.for("react.memo"),k=Symbol.for("react.lazy"),H=Symbol.for("react.activity"),ul=Symbol.iterator;function Sl(d){return d===null||typeof d!="object"?null:(d=ul&&d[ul]||d["@@iterator"],typeof d=="function"?d:null)}var nl={isMounted:function(){return!1},enqueueForceUpdate:function(){},enqueueReplaceState:function(){},enqueueSetState:function(){}},hl=Object.assign,vt={};function Dl(d,E,O){this.props=d,this.context=E,this.refs=vt,this.updater=O||nl}Dl.prototype.isReactComponent={},Dl.prototype.setState=function(d,E){if(typeof d!="object"&&typeof d!="function"&&d!=null)throw Error("takes an object of state variables to update or a function which returns an object of state variables.");this.updater.enqueueSetState(this,d,E,"setState")},Dl.prototype.forceUpdate=function(d){this.updater.enqueueForceUpdate(this,d,"forceUpdate")};function Ot(){}Ot.prototype=Dl.prototype;function pl(d,E,O){this.props=d,this.context=E,this.refs=vt,this.updater=O||nl}var Ll=pl.prototype=new Ot;Ll.constructor=pl,hl(Ll,Dl.prototype),Ll.isPureReactComponent=!0;var yt=Array.isArray;function Ql(){}var K={H:null,A:null,T:null,S:null},Xl=Object.prototype.hasOwnProperty;function ht(d,E,O){var D=O.ref;return{$$typeof:A,type:d,key:E,ref:D!==void 0?D:null,props:O}}function It(d,E){return ht(d.type,E,d.props)}function rl(d){return typeof d=="object"&&d!==null&&d.$$typeof===A}function zl(d){var E={"=":"=0",":":"=2"};return"$"+d.replace(/[=:]/g,function(O){return E[O]})}var Kl=/\/+/g;function Wl(d,E){return typeof d=="object"&&d!==null&&d.key!=null?zl(""+d.key):E.toString(36)}function Zl(d){switch(d.status){case"fulfilled":return d.value;case"rejected":throw d.reason;default:switch(typeof d.status=="string"?d.then(Ql,Ql):(d.status="pending",d.then(function(E){d.status==="pending"&&(d.status="fulfilled",d.value=E)},function(E){d.status==="pending"&&(d.status="rejected",d.reason=E)})),d.status){case"fulfilled":return d.value;case"rejected":throw d.reason}}throw d}function g(d,E,O,D,X){var J=typeof d;(J==="undefined"||J==="boolean")&&(d=null);var el=!1;if(d===null)el=!0;else switch(J){case"bigint":case"string":case"number":el=!0;break;case"object":switch(d.$$typeof){case A:case U:el=!0;break;case k:return el=d._init,g(el(d._payload),E,O,D,X)}}if(el)return X=X(d),el=D===""?"."+Wl(d,0):D,yt(X)?(O="",el!=null&&(O=el.replace(Kl,"$&/")+"/"),g(X,E,O,"",function(xe){return xe})):X!=null&&(rl(X)&&(X=It(X,O+(X.key==null||d&&d.key===X.key?"":(""+X.key).replace(Kl,"$&/")+"/")+el)),E.push(X)),1;el=0;var Jl=D===""?".":D+":";if(yt(d))for(var Tl=0;Tl<d.length;Tl++)D=d[Tl],J=Jl+Wl(D,Tl),el+=g(D,E,O,J,X);else if(Tl=Sl(d),typeof Tl=="function")for(d=Tl.call(d),Tl=0;!(D=d.next()).done;)D=D.value,J=Jl+Wl(D,Tl++),el+=g(D,E,O,J,X);else if(J==="object"){if(typeof d.then=="function")return g(Zl(d),E,O,D,X);throw E=String(d),Error("Objects are not valid as a React child (found: "+(E==="[object Object]"?"object with keys {"+Object.keys(d).join(", ")+"}":E)+"). If you meant to render a collection of children, use an array instead.")}return el}function p(d,E,O){if(d==null)return d;var D=[],X=0;return g(d,D,"","",function(J){return E.call(O,J,X++)}),D}function Y(d){if(d._status===-1){var E=d._result;E=E(),E.then(function(O){(d._status===0||d._status===-1)&&(d._status=1,d._result=O)},function(O){(d._status===0||d._status===-1)&&(d._status=2,d._result=O)}),d._status===-1&&(d._status=0,d._result=E)}if(d._status===1)return d._result.default;throw d._result}var al=typeof reportError=="function"?reportError:function(d){if(typeof window=="object"&&typeof window.ErrorEvent=="function"){var E=new window.ErrorEvent("error",{bubbles:!0,cancelable:!0,message:typeof d=="object"&&d!==null&&typeof d.message=="string"?String(d.message):String(d),error:d});if(!window.dispatchEvent(E))return}else if(typeof process=="object"&&typeof process.emit=="function"){process.emit("uncaughtException",d);return}console.error(d)},cl={map:p,forEach:function(d,E,O){p(d,function(){E.apply(this,arguments)},O)},count:function(d){var E=0;return p(d,function(){E++}),E},toArray:function(d){return p(d,function(E){return E})||[]},only:function(d){if(!rl(d))throw Error("React.Children.only expected to receive a single React element child.");return d}};return Q.Activity=H,Q.Children=cl,Q.Component=Dl,Q.Fragment=G,Q.Profiler=M,Q.PureComponent=pl,Q.StrictMode=m,Q.Suspense=N,Q.__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE=K,Q.__COMPILER_RUNTIME={__proto__:null,c:function(d){return K.H.useMemoCache(d)}},Q.cache=function(d){return function(){return d.apply(null,arguments)}},Q.cacheSignal=function(){return null},Q.cloneElement=function(d,E,O){if(d==null)throw Error("The argument must be a React element, but you passed "+d+".");var D=hl({},d.props),X=d.key;if(E!=null)for(J in E.key!==void 0&&(X=""+E.key),E)!Xl.call(E,J)||J==="key"||J==="__self"||J==="__source"||J==="ref"&&E.ref===void 0||(D[J]=E[J]);var J=arguments.length-2;if(J===1)D.children=O;else if(1<J){for(var el=Array(J),Jl=0;Jl<J;Jl++)el[Jl]=arguments[Jl+2];D.children=el}return ht(d.type,X,D)},Q.createContext=function(d){return d={$$typeof:L,_currentValue:d,_currentValue2:d,_threadCount:0,Provider:null,Consumer:null},d.Provider=d,d.Consumer={$$typeof:C,_context:d},d},Q.createElement=function(d,E,O){var D,X={},J=null;if(E!=null)for(D in E.key!==void 0&&(J=""+E.key),E)Xl.call(E,D)&&D!=="key"&&D!=="__self"&&D!=="__source"&&(X[D]=E[D]);var el=arguments.length-2;if(el===1)X.children=O;else if(1<el){for(var Jl=Array(el),Tl=0;Tl<el;Tl++)Jl[Tl]=arguments[Tl+2];X.children=Jl}if(d&&d.defaultProps)for(D in el=d.defaultProps,el)X[D]===void 0&&(X[D]=el[D]);return ht(d,J,X)},Q.createRef=function(){return{current:null}},Q.forwardRef=function(d){return{$$typeof:q,render:d}},Q.isValidElement=rl,Q.lazy=function(d){return{$$typeof:k,_payload:{_status:-1,_result:d},_init:Y}},Q.memo=function(d,E){return{$$typeof:z,type:d,compare:E===void 0?null:E}},Q.startTransition=function(d){var E=K.T,O={};K.T=O;try{var D=d(),X=K.S;X!==null&&X(O,D),typeof D=="object"&&D!==null&&typeof D.then=="function"&&D.then(Ql,al)}catch(J){al(J)}finally{E!==null&&O.types!==null&&(E.types=O.types),K.T=E}},Q.unstable_useCacheRefresh=function(){return K.H.useCacheRefresh()},Q.use=function(d){return K.H.use(d)},Q.useActionState=function(d,E,O){return K.H.useActionState(d,E,O)},Q.useCallback=function(d,E){return K.H.useCallback(d,E)},Q.useContext=function(d){return K.H.useContext(d)},Q.useDebugValue=function(){},Q.useDeferredValue=function(d,E){return K.H.useDeferredValue(d,E)},Q.useEffect=function(d,E){return K.H.useEffect(d,E)},Q.useEffectEvent=function(d){return K.H.useEffectEvent(d)},Q.useId=function(){return K.H.useId()},Q.useImperativeHandle=function(d,E,O){return K.H.useImperativeHandle(d,E,O)},Q.useInsertionEffect=function(d,E){return K.H.useInsertionEffect(d,E)},Q.useLayoutEffect=function(d,E){return K.H.useLayoutEffect(d,E)},Q.useMemo=function(d,E){return K.H.useMemo(d,E)},Q.useOptimistic=function(d,E){return K.H.useOptimistic(d,E)},Q.useReducer=function(d,E,O){return K.H.useReducer(d,E,O)},Q.useRef=function(d){return K.H.useRef(d)},Q.useState=function(d){return K.H.useState(d)},Q.useSyncExternalStore=function(d,E,O){return K.H.useSyncExternalStore(d,E,O)},Q.useTransition=function(){return K.H.useTransition()},Q.version="19.2.0",Q}var zm;function ri(){return zm||(zm=1,si.exports=ty()),si.exports}var at=ri(),di={exports:{}},zu={},mi={exports:{}},oi={};var Tm;function ay(){return Tm||(Tm=1,(function(A){function U(g,p){var Y=g.length;g.push(p);l:for(;0<Y;){var al=Y-1>>>1,cl=g[al];if(0<M(cl,p))g[al]=p,g[Y]=cl,Y=al;else break l}}function G(g){return g.length===0?null:g[0]}function m(g){if(g.length===0)return null;var p=g[0],Y=g.pop();if(Y!==p){g[0]=Y;l:for(var al=0,cl=g.length,d=cl>>>1;al<d;){var E=2*(al+1)-1,O=g[E],D=E+1,X=g[D];if(0>M(O,Y))D<cl&&0>M(X,O)?(g[al]=X,g[D]=Y,al=D):(g[al]=O,g[E]=Y,al=E);else if(D<cl&&0>M(X,Y))g[al]=X,g[D]=Y,al=D;else break l}}return p}function M(g,p){var Y=g.sortIndex-p.sortIndex;return Y!==0?Y:g.id-p.id}if(A.unstable_now=void 0,typeof performance=="object"&&typeof performance.now=="function"){var C=performance;A.unstable_now=function(){return C.now()}}else{var L=Date,q=L.now();A.unstable_now=function(){return L.now()-q}}var N=[],z=[],k=1,H=null,ul=3,Sl=!1,nl=!1,hl=!1,vt=!1,Dl=typeof setTimeout=="function"?setTimeout:null,Ot=typeof clearTimeout=="function"?clearTimeout:null,pl=typeof setImmediate<"u"?setImmediate:null;function Ll(g){for(var p=G(z);p!==null;){if(p.callback===null)m(z);else if(p.startTime<=g)m(z),p.sortIndex=p.expirationTime,U(N,p);else break;p=G(z)}}function yt(g){if(hl=!1,Ll(g),!nl)if(G(N)!==null)nl=!0,Ql||(Ql=!0,zl());else{var p=G(z);p!==null&&Zl(yt,p.startTime-g)}}var Ql=!1,K=-1,Xl=5,ht=-1;function It(){return vt?!0:!(A.unstable_now()-ht<Xl)}function rl(){if(vt=!1,Ql){var g=A.unstable_now();ht=g;var p=!0;try{l:{nl=!1,hl&&(hl=!1,Ot(K),K=-1),Sl=!0;var Y=ul;try{t:{for(Ll(g),H=G(N);H!==null&&!(H.expirationTime>g&&It());){var al=H.callback;if(typeof al=="function"){H.callback=null,ul=H.priorityLevel;var cl=al(H.expirationTime<=g);if(g=A.unstable_now(),typeof cl=="function"){H.callback=cl,Ll(g),p=!0;break t}H===G(N)&&m(N),Ll(g)}else m(N);H=G(N)}if(H!==null)p=!0;else{var d=G(z);d!==null&&Zl(yt,d.startTime-g),p=!1}}break l}finally{H=null,ul=Y,Sl=!1}p=void 0}}finally{p?zl():Ql=!1}}}var zl;if(typeof pl=="function")zl=function(){pl(rl)};else if(typeof MessageChannel<"u"){var Kl=new MessageChannel,Wl=Kl.port2;Kl.port1.onmessage=rl,zl=function(){Wl.postMessage(null)}}else zl=function(){Dl(rl,0)};function Zl(g,p){K=Dl(function(){g(A.unstable_now())},p)}A.unstable_IdlePriority=5,A.unstable_ImmediatePriority=1,A.unstable_LowPriority=4,A.unstable_NormalPriority=3,A.unstable_Profiling=null,A.unstable_UserBlockingPriority=2,A.unstable_cancelCallback=function(g){g.callback=null},A.unstable_forceFrameRate=function(g){0>g||125<g?console.error("forceFrameRate takes a positive int between 0 and 125, forcing frame rates higher than 125 fps is not supported"):Xl=0<g?Math.floor(1e3/g):5},A.unstable_getCurrentPriorityLevel=function(){return ul},A.unstable_next=function(g){switch(ul){case 1:case 2:case 3:var p=3;break;default:p=ul}var Y=ul;ul=p;try{return g()}finally{ul=Y}},A.unstable_requestPaint=function(){vt=!0},A.unstable_runWithPriority=function(g,p){switch(g){case 1:case 2:case 3:case 4:case 5:break;default:g=3}var Y=ul;ul=g;try{return p()}finally{ul=Y}},A.unstable_scheduleCallback=function(g,p,Y){var al=A.unstable_now();switch(typeof Y=="object"&&Y!==null?(Y=Y.delay,Y=typeof Y=="number"&&0<Y?al+Y:al):Y=al,g){case 1:var cl=-1;break;case 2:cl=250;break;case 5:cl=1073741823;break;case 4:cl=1e4;break;default:cl=5e3}return cl=Y+cl,g={id:k++,callback:p,priorityLevel:g,startTime:Y,expirationTime:cl,sortIndex:-1},Y>al?(g.sortIndex=Y,U(z,g),G(N)===null&&g===G(z)&&(hl?(Ot(K),K=-1):hl=!0,Zl(yt,Y-al))):(g.sortIndex=cl,U(N,g),nl||Sl||(nl=!0,Ql||(Ql=!0,zl()))),g},A.unstable_shouldYield=It,A.unstable_wrapCallback=function(g){var p=ul;return function(){var Y=ul;ul=p;try{return g.apply(this,arguments)}finally{ul=Y}}}})(oi)),oi}var Em;function ey(){return Em||(Em=1,mi.exports=ay()),mi.exports}var vi={exports:{}},Vl={};var Am;function uy(){if(Am)return Vl;Am=1;var A=ri();function U(N){var z="https://react.dev/errors/"+N;if(1<arguments.length){z+="?args[]="+encodeURIComponent(arguments[1]);for(var k=2;k<arguments.length;k++)z+="&args[]="+encodeURIComponent(arguments[k])}return"Minified React error #"+N+"; visit "+z+" for the full message or use the non-minified dev environment for full errors and additional helpful warnings."}function G(){}var m={d:{f:G,r:function(){throw Error(U(522))},D:G,C:G,L:G,m:G,X:G,S:G,M:G},p:0,findDOMNode:null},M=Symbol.for("react.portal");function C(N,z,k){var H=3<arguments.length&&arguments[3]!==void 0?arguments[3]:null;return{$$typeof:M,key:H==null?null:""+H,children:N,containerInfo:z,implementation:k}}var L=A.__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE;function q(N,z){if(N==="font")return"";if(typeof z=="string")return z==="use-credentials"?z:""}return Vl.__DOM_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE=m,Vl.createPortal=function(N,z){var k=2<arguments.length&&arguments[2]!==void 0?arguments[2]:null;if(!z||z.nodeType!==1&&z.nodeType!==9&&z.nodeType!==11)throw Error(U(299));return C(N,z,null,k)},Vl.flushSync=function(N){var z=L.T,k=m.p;try{if(L.T=null,m.p=2,N)return N()}finally{L.T=z,m.p=k,m.d.f()}},Vl.preconnect=function(N,z){typeof N=="string"&&(z?(z=z.crossOrigin,z=typeof z=="string"?z==="use-credentials"?z:"":void 0):z=null,m.d.C(N,z))},Vl.prefetchDNS=function(N){typeof N=="string"&&m.d.D(N)},Vl.preinit=function(N,z){if(typeof N=="string"&&z&&typeof z.as=="string"){var k=z.as,H=q(k,z.crossOrigin),ul=typeof z.integrity=="string"?z.integrity:void 0,Sl=typeof z.fetchPriority=="string"?z.fetchPriority:void 0;k==="style"?m.d.S(N,typeof z.precedence=="string"?z.precedence:void 0,{crossOrigin:H,integrity:ul,fetchPriority:Sl}):k==="script"&&m.d.X(N,{crossOrigin:H,integrity:ul,fetchPriority:Sl,nonce:typeof z.nonce=="string"?z.nonce:void 0})}},Vl.preinitModule=function(N,z){if(typeof N=="string")if(typeof z=="object"&&z!==null){if(z.as==null||z.as==="script"){var k=q(z.as,z.crossOrigin);m.d.M(N,{crossOrigin:k,integrity:typeof z.integrity=="string"?z.integrity:void 0,nonce:typeof z.nonce=="string"?z.nonce:void 0})}}else z==null&&m.d.M(N)},Vl.preload=function(N,z){if(typeof N=="string"&&typeof z=="object"&&z!==null&&typeof z.as=="string"){var k=z.as,H=q(k,z.crossOrigin);m.d.L(N,k,{crossOrigin:H,integrity:typeof z.integrity=="string"?z.integrity:void 0,nonce:typeof z.nonce=="string"?z.nonce:void 0,type:typeof z.type=="string"?z.type:void 0,fetchPriority:typeof z.fetchPriority=="string"?z.fetchPriority:void 0,referrerPolicy:typeof z.referrerPolicy=="string"?z.referrerPolicy:void 0,imageSrcSet:typeof z.imageSrcSet=="string"?z.imageSrcSet:void 0,imageSizes:typeof z.imageSizes=="string"?z.imageSizes:void 0,media:typeof z.media=="string"?z.media:void 0})}},Vl.preloadModule=function(N,z){if(typeof N=="string")if(z){var k=q(z.as,z.crossOrigin);m.d.m(N,{as:typeof z.as=="string"&&z.as!=="script"?z.as:void 0,crossOrigin:k,integrity:typeof z.integrity=="string"?z.integrity:void 0})}else m.d.m(N)},Vl.requestFormReset=function(N){m.d.r(N)},Vl.unstable_batchedUpdates=function(N,z){return N(z)},Vl.useFormState=function(N,z,k){return L.H.useFormState(N,z,k)},Vl.useFormStatus=function(){return L.H.useHostTransitionStatus()},Vl.version="19.2.0",Vl}var pm;function ny(){if(pm)return vi.exports;pm=1;function A(){if(!(typeof __REACT_DEVTOOLS_GLOBAL_HOOK__>"u"||typeof __REACT_DEVTOOLS_GLOBAL_HOOK__.checkDCE!="function"))try{__REACT_DEVTOOLS_GLOBAL_HOOK__.checkDCE(A)}catch(U){console.error(U)}}return A(),vi.exports=uy(),vi.exports}var Om;function cy(){if(Om)return zu;Om=1;var A=ey(),U=ri(),G=ny();function m(l){var t="https://react.dev/errors/"+l;if(1<arguments.length){t+="?args[]="+encodeURIComponent(arguments[1]);for(var a=2;a<arguments.length;a++)t+="&args[]="+encodeURIComponent(arguments[a])}return"Minified React error #"+l+"; visit "+t+" for the full message or use the non-minified dev environment for full errors and additional helpful warnings."}function M(l){return!(!l||l.nodeType!==1&&l.nodeType!==9&&l.nodeType!==11)}function C(l){var t=l,a=l;if(l.alternate)for(;t.return;)t=t.return;else{l=t;do t=l,(t.flags&4098)!==0&&(a=t.return),l=t.return;while(l)}return t.tag===3?a:null}function L(l){if(l.tag===13){var t=l.memoizedState;if(t===null&&(l=l.alternate,l!==null&&(t=l.memoizedState)),t!==null)return t.dehydrated}return null}function q(l){if(l.tag===31){var t=l.memoizedState;if(t===null&&(l=l.alternate,l!==null&&(t=l.memoizedState)),t!==null)return t.dehydrated}return null}function N(l){if(C(l)!==l)throw Error(m(188))}function z(l){var t=l.alternate;if(!t){if(t=C(l),t===null)throw Error(m(188));return t!==l?null:l}for(var a=l,e=t;;){var u=a.return;if(u===null)break;var n=u.alternate;if(n===null){if(e=u.return,e!==null){a=e;continue}break}if(u.child===n.child){for(n=u.child;n;){if(n===a)return N(u),l;if(n===e)return N(u),t;n=n.sibling}throw Error(m(188))}if(a.return!==e.return)a=u,e=n;else{for(var c=!1,f=u.child;f;){if(f===a){c=!0,a=u,e=n;break}if(f===e){c=!0,e=u,a=n;break}f=f.sibling}if(!c){for(f=n.child;f;){if(f===a){c=!0,a=n,e=u;break}if(f===e){c=!0,e=n,a=u;break}f=f.sibling}if(!c)throw Error(m(189))}}if(a.alternate!==e)throw Error(m(190))}if(a.tag!==3)throw Error(m(188));return a.stateNode.current===a?l:t}function k(l){var t=l.tag;if(t===5||t===26||t===27||t===6)return l;for(l=l.child;l!==null;){if(t=k(l),t!==null)return t;l=l.sibling}return null}var H=Object.assign,ul=Symbol.for("react.element"),Sl=Symbol.for("react.transitional.element"),nl=Symbol.for("react.portal"),hl=Symbol.for("react.fragment"),vt=Symbol.for("react.strict_mode"),Dl=Symbol.for("react.profiler"),Ot=Symbol.for("react.consumer"),pl=Symbol.for("react.context"),Ll=Symbol.for("react.forward_ref"),yt=Symbol.for("react.suspense"),Ql=Symbol.for("react.suspense_list"),K=Symbol.for("react.memo"),Xl=Symbol.for("react.lazy"),ht=Symbol.for("react.activity"),It=Symbol.for("react.memo_cache_sentinel"),rl=Symbol.iterator;function zl(l){return l===null||typeof l!="object"?null:(l=rl&&l[rl]||l["@@iterator"],typeof l=="function"?l:null)}var Kl=Symbol.for("react.client.reference");function Wl(l){if(l==null)return null;if(typeof l=="function")return l.$$typeof===Kl?null:l.displayName||l.name||null;if(typeof l=="string")return l;switch(l){case hl:return"Fragment";case Dl:return"Profiler";case vt:return"StrictMode";case yt:return"Suspense";case Ql:return"SuspenseList";case ht:return"Activity"}if(typeof l=="object")switch(l.$$typeof){case nl:return"Portal";case pl:return l.displayName||"Context";case Ot:return(l._context.displayName||"Context")+".Consumer";case Ll:var t=l.render;return l=l.displayName,l||(l=t.displayName||t.name||"",l=l!==""?"ForwardRef("+l+")":"ForwardRef"),l;case K:return t=l.displayName||null,t!==null?t:Wl(l.type)||"Memo";case Xl:t=l._payload,l=l._init;try{return Wl(l(t))}catch{}}return null}var Zl=Array.isArray,g=U.__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE,p=G.__DOM_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE,Y={pending:!1,data:null,method:null,action:null},al=[],cl=-1;function d(l){return{current:l}}function E(l){0>cl||(l.current=al[cl],al[cl]=null,cl--)}function O(l,t){cl++,al[cl]=l.current,l.current=t}var D=d(null),X=d(null),J=d(null),el
+
+...[TRUNCATED]...
+
+
+================================================================================
+FILE: frontend/docs/assets/index-Vq2dOF9D.css
+================================================================================
+
+*,:before,:after{--tw-border-spacing-x: 0;--tw-border-spacing-y: 0;--tw-translate-x: 0;--tw-translate-y: 0;--tw-rotate: 0;--tw-skew-x: 0;--tw-skew-y: 0;--tw-scale-x: 1;--tw-scale-y: 1;--tw-pan-x: ;--tw-pan-y: ;--tw-pinch-zoom: ;--tw-scroll-snap-strictness: proximity;--tw-gradient-from-position: ;--tw-gradient-via-position: ;--tw-gradient-to-position: ;--tw-ordinal: ;--tw-slashed-zero: ;--tw-numeric-figure: ;--tw-numeric-spacing: ;--tw-numeric-fraction: ;--tw-ring-inset: ;--tw-ring-offset-width: 0px;--tw-ring-offset-color: #fff;--tw-ring-color: rgb(59 130 246 / .5);--tw-ring-offset-shadow: 0 0 #0000;--tw-ring-shadow: 0 0 #0000;--tw-shadow: 0 0 #0000;--tw-shadow-colored: 0 0 #0000;--tw-blur: ;--tw-brightness: ;--tw-contrast: ;--tw-grayscale: ;--tw-hue-rotate: ;--tw-invert: ;--tw-saturate: ;--tw-sepia: ;--tw-drop-shadow: ;--tw-backdrop-blur: ;--tw-backdrop-brightness: ;--tw-backdrop-contrast: ;--tw-backdrop-grayscale: ;--tw-backdrop-hue-rotate: ;--tw-backdrop-invert: ;--tw-backdrop-opacity: ;--tw-backdrop-saturate: ;--tw-backdrop-sepia: ;--tw-contain-size: ;--tw-contain-layout: ;--tw-contain-paint: ;--tw-contain-style: }::backdrop{--tw-border-spacing-x: 0;--tw-border-spacing-y: 0;--tw-translate-x: 0;--tw-translate-y: 0;--tw-rotate: 0;--tw-skew-x: 0;--tw-skew-y: 0;--tw-scale-x: 1;--tw-scale-y: 1;--tw-pan-x: ;--tw-pan-y: ;--tw-pinch-zoom: ;--tw-scroll-snap-strictness: proximity;--tw-gradient-from-position: ;--tw-gradient-via-position: ;--tw-gradient-to-position: ;--tw-ordinal: ;--tw-slashed-zero: ;--tw-numeric-figure: ;--tw-numeric-spacing: ;--tw-numeric-fraction: ;--tw-ring-inset: ;--tw-ring-offset-width: 0px;--tw-ring-offset-color: #fff;--tw-ring-color: rgb(59 130 246 / .5);--tw-ring-offset-shadow: 0 0 #0000;--tw-ring-shadow: 0 0 #0000;--tw-shadow: 0 0 #0000;--tw-shadow-colored: 0 0 #0000;--tw-blur: ;--tw-brightness: ;--tw-contrast: ;--tw-grayscale: ;--tw-hue-rotate: ;--tw-invert: ;--tw-saturate: ;--tw-sepia: ;--tw-drop-shadow: ;--tw-backdrop-blur: ;--tw-backdrop-brightness: ;--tw-backdrop-contrast: ;--tw-backdrop-grayscale: ;--tw-backdrop-hue-rotate: ;--tw-backdrop-invert: ;--tw-backdrop-opacity: ;--tw-backdrop-saturate: ;--tw-backdrop-sepia: ;--tw-contain-size: ;--tw-contain-layout: ;--tw-contain-paint: ;--tw-contain-style: }*,:before,:after{box-sizing:border-box;border-width:0;border-style:solid;border-color:#e5e7eb}:before,:after{--tw-content: ""}html,:host{line-height:1.5;-webkit-text-size-adjust:100%;-moz-tab-size:4;-o-tab-size:4;tab-size:4;font-family:ui-sans-serif,system-ui,sans-serif,"Apple Color Emoji","Segoe UI Emoji",Segoe UI Symbol,"Noto Color Emoji";font-feature-settings:normal;font-variation-settings:normal;-webkit-tap-highlight-color:transparent}body{margin:0;line-height:inherit}hr{height:0;color:inherit;border-top-width:1px}abbr:where([title]){-webkit-text-decoration:underline dotted;text-decoration:underline dotted}h1,h2,h3,h4,h5,h6{font-size:inherit;font-weight:inherit}a{color:inherit;text-decoration:inherit}b,strong{font-weight:bolder}code,kbd,samp,pre{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,Liberation Mono,Courier New,monospace;font-feature-settings:normal;font-variation-settings:normal;font-size:1em}small{font-size:80%}sub,sup{font-size:75%;line-height:0;position:relative;vertical-align:baseline}sub{bottom:-.25em}sup{top:-.5em}table{text-indent:0;border-color:inherit;border-collapse:collapse}button,input,optgroup,select,textarea{font-family:inherit;font-feature-settings:inherit;font-variation-settings:inherit;font-size:100%;font-weight:inherit;line-height:inherit;letter-spacing:inherit;color:inherit;margin:0;padding:0}button,select{text-transform:none}button,input:where([type=button]),input:where([type=reset]),input:where([type=submit]){-webkit-appearance:button;background-color:transparent;background-image:none}:-moz-focusring{outline:auto}:-moz-ui-invalid{box-shadow:none}progress{vertical-align:baseline}::-webkit-inner-spin-button,::-webkit-outer-spin-button{height:auto}[type=search]{-webkit-appearance:textfield;outline-offset:-2px}::-webkit-search-decoration{-webkit-appearance:none}::-webkit-file-upload-button{-webkit-appearance:button;font:inherit}summary{display:list-item}blockquote,dl,dd,h1,h2,h3,h4,h5,h6,hr,figure,p,pre{margin:0}fieldset{margin:0;padding:0}legend{padding:0}ol,ul,menu{list-style:none;margin:0;padding:0}dialog{padding:0}textarea{resize:vertical}input::-moz-placeholder,textarea::-moz-placeholder{opacity:1;color:#9ca3af}input::placeholder,textarea::placeholder{opacity:1;color:#9ca3af}button,[role=button]{cursor:pointer}:disabled{cursor:default}img,svg,video,canvas,audio,iframe,embed,object{display:block;vertical-align:middle}img,video{max-width:100%;height:auto}[hidden]:where(:not([hidden=until-found])){display:none}.sticky{position:sticky}.top-0{top:0}.col-span-2{grid-column:span 2 / span 2}.mb-1{margin-bottom:.25rem}.mb-3{margin-bottom:.75rem}.mb-4{margin-bottom:1rem}.ml-3{margin-left:.75rem}.ml-4{margin-left:1rem}.mt-2{margin-top:.5rem}.mt-3{margin-top:.75rem}.mt-4{margin-top:1rem}.mt-auto{margin-top:auto}.flex{display:flex}.table{display:table}.grid{display:grid}.h-10{height:2.5rem}.h-16{height:4rem}.h-7{height:1.75rem}.h-9{height:2.25rem}.h-\[calc\(100vh-4rem\)\]{height:calc(100vh - 4rem)}.h-\[calc\(100vh-7rem\)\]{height:calc(100vh - 7rem)}.h-full{height:100%}.h-screen{height:100vh}.max-h-24{max-height:6rem}.max-h-64{max-height:16rem}.w-full{width:100%}.max-w-sm{max-width:24rem}.flex-1{flex:1 1 0%}.cursor-pointer{cursor:pointer}.grid-cols-2{grid-template-columns:repeat(2,minmax(0,1fr))}.grid-cols-\[240px_1fr_320px\]{grid-template-columns:240px 1fr 320px}.flex-col{flex-direction:column}.place-items-center{place-items:center}.items-center{align-items:center}.justify-between{justify-content:space-between}.gap-0{gap:0px}.gap-2{gap:.5rem}.gap-3{gap:.75rem}.gap-4{gap:1rem}.space-y-2>:not([hidden])~:not([hidden]){--tw-space-y-reverse: 0;margin-top:calc(.5rem * calc(1 - var(--tw-space-y-reverse)));margin-bottom:calc(.5rem * var(--tw-space-y-reverse))}.space-y-4>:not([hidden])~:not([hidden]){--tw-space-y-reverse: 0;margin-top:calc(1rem * calc(1 - var(--tw-space-y-reverse)));margin-bottom:calc(1rem * var(--tw-space-y-reverse))}.overflow-auto{overflow:auto}.truncate{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.whitespace-pre-wrap{white-space:pre-wrap}.rounded{border-radius:.25rem}.rounded-lg{border-radius:.5rem}.rounded-md{border-radius:.375rem}.border{border-width:1px}.border-b{border-bottom-width:1px}.border-l{border-left-width:1px}.border-r{border-right-width:1px}.border-t{border-top-width:1px}.bg-gray-100{--tw-bg-opacity: 1;background-color:rgb(243 244 246 / var(--tw-bg-opacity, 1))}.bg-gray-50{--tw-bg-opacity: 1;background-color:rgb(249 250 251 / var(--tw-bg-opacity, 1))}.bg-gray-800{--tw-bg-opacity: 1;background-color:rgb(31 41 55 / var(--tw-bg-opacity, 1))}.bg-purple-600{--tw-bg-opacity: 1;background-color:rgb(147 51 234 / var(--tw-bg-opacity, 1))}.bg-white{--tw-bg-opacity: 1;background-color:rgb(255 255 255 / var(--tw-bg-opacity, 1))}.p-2{padding:.5rem}.p-3{padding:.75rem}.p-4{padding:1rem}.p-6{padding:1.5rem}.px-2{padding-left:.5rem;padding-right:.5rem}.px-3{padding-left:.75rem;padding-right:.75rem}.px-4{padding-left:1rem;padding-right:1rem}.py-1{padding-top:.25rem;padding-bottom:.25rem}.pt-3{padding-top:.75rem}.text-left{text-align:left}.text-lg{font-size:1.125rem;line-height:1.75rem}.text-sm{font-size:.875rem;line-height:1.25rem}.text-xl{font-size:1.25rem;line-height:1.75rem}.text-xs{font-size:.75rem;line-height:1rem}.font-bold{font-weight:700}.font-medium{font-weight:500}.font-semibold{font-weight:600}.text-gray-400{--tw-text-opacity: 1;color:rgb(156 163 175 / var(--tw-text-opacity, 1))}.text-gray-500{--tw-text-opacity: 1;color:rgb(107 114 128 / var(--tw-text-opacity, 1))}.text-gray-600{--tw-text-opacity: 1;color:rgb(75 85 99 / var(--tw-text-opacity, 1))}.text-gray-700{--tw-text-opacity: 1;color:rgb(55 65 81 / var(--tw-text-opacity, 1))}.text-purple-600{--tw-text-opacity: 1;color:rgb(147 51 234 / var(--tw-text-opacity, 1))}.text-red-600{--tw-text-opacity: 1;color:rgb(220 38 38 / var(--tw-text-opacity, 1))}.text-white{--tw-text-opacity: 1;color:rgb(255 255 255 / var(--tw-text-opacity, 1))}.outline-none{outline:2px solid transparent;outline-offset:2px}.hover\:bg-gray-100:hover{--tw-bg-opacity: 1;background-color:rgb(243 244 246 / var(--tw-bg-opacity, 1))}.hover\:bg-gray-900:hover{--tw-bg-opacity: 1;background-color:rgb(17 24 39 / var(--tw-bg-opacity, 1))}.hover\:bg-purple-700:hover{--tw-bg-opacity: 1;background-color:rgb(126 34 206 / var(--tw-bg-opacity, 1))}.hover\:text-black:hover{--tw-text-opacity: 1;color:rgb(0 0 0 / var(--tw-text-opacity, 1))}
+
+
+================================================================================
+FILE: frontend/public/vite.svg
+================================================================================
+
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" aria-hidden="true" role="img" class="iconify iconify--logos" width="31.88" height="32" preserveAspectRatio="xMidYMid meet" viewBox="0 0 256 257"><defs><linearGradient id="IconifyId1813088fe1fbc01fb466" x1="-.828%" x2="57.636%" y1="7.652%" y2="78.411%"><stop offset="0%" stop-color="#41D1FF"></stop><stop offset="100%" stop-color="#BD34FE"></stop></linearGradient><linearGradient id="IconifyId1813088fe1fbc01fb467" x1="43.376%" x2="50.316%" y1="2.242%" y2="89.03%"><stop offset="0%" stop-color="#FFEA83"></stop><stop offset="8.333%" stop-color="#FFDD35"></stop><stop offset="100%" stop-color="#FFA800"></stop></linearGradient></defs><path fill="url(#IconifyId1813088fe1fbc01fb466)" d="M255.153 37.938L134.897 252.976c-2.483 4.44-8.862 4.466-11.382.048L.875 37.958c-2.746-4.814 1.371-10.646 6.827-9.67l120.385 21.517a6.537 6.537 0 0 0 2.322-.004l117.867-21.483c5.438-.991 9.574 4.796 6.877 9.62Z"></path><path fill="url(#IconifyId1813088fe1fbc01fb467)" d="M185.432.063L96.44 17.501a3.268 3.268 0 0 0-2.634 3.014l-5.474 92.456a3.268 3.268 0 0 0 3.997 3.378l24.777-5.718c2.318-.535 4.413 1.507 3.936 3.838l-7.361 36.047c-.495 2.426 1.782 4.5 4.151 3.78l15.304-4.649c2.372-.72 4.652 1.36 4.15 3.788l-11.698 56.621c-.732 3.542 3.979 5.473 5.943 2.437l1.313-2.028l72.516-144.72c1.215-2.423-.88-5.186-3.54-4.672l-25.505 4.922c-2.396.462-4.435-1.77-3.759-4.114l16.646-57.705c.677-2.35-1.37-4.583-3.769-4.113Z"></path></svg>
+
+================================================================================
+FILE: frontend/src/Header.jsx
+================================================================================
+
+export default function Header({ onLogout }) {
+  return (
+    <header className="h-16 border-b px-4 flex items-center justify-between bg-white">
+      <div className="flex items-center gap-2">
+        <span className="text-xl font-bold text-purple-600">*</span>
+        <span className="font-semibold">SENTENCIFY</span>
+        <span className="ml-3 text-sm text-gray-500">Team Project – MVP</span>
+      </div>
+
+      <nav className="flex items-center gap-4 text-sm">
+        <a className="text-gray-600 hover:text-black" href="#">
+          에디터
+        </a>
+        <a className="text-gray-600 hover:text-black" href="#">
+          튜토리얼
+        </a>
+        <a className="text-gray-600 hover:text-black" href="#">
+          FAQ
+        </a>
+
+        <button
+          onClick={onLogout}
+          className="ml-4 h-9 px-3 rounded-md bg-gray-800 text-white hover:bg-gray-900"
+        >
+          로그아웃
+        </button>
+      </nav>
+    </header>
+  );
+}
+
+
+================================================================================
+FILE: frontend/src/DebugPanel.jsx
+================================================================================
+
+export default function DebugPanel({
+  text,
+  selection,
+  context,
+  options,
+  docId,
+  recommendId,
+}) {
+  const events = window.__eventLog || [];
+
+  return (
+    <div className="mt-4 border rounded p-3 text-xs bg-gray-50">
+      <div className="flex items-center justify-between">
+        <strong className="text-gray-700">Debug Panel</strong>
+        <div className="flex gap-2">
+          <button
+            className="px-2 py-1 rounded bg-gray-800 text-white"
+            onClick={() => {
+              window.__eventLog = [];
+              alert('이벤트 로그 초기화');
+            }}
+          >
+            로그 초기화
+          </button>
+          <button
+            className="px-2 py-1 rounded bg-gray-800 text-white"
+            onClick={() => {
+              try {
+                const dump = {
+                  textLen: text.length,
+                  selection,
+                  context,
+                  options,
+                  docId,
+                  recommendId,
+                  events,
+                };
+                console.log('[DUMP]', dump);
+                alert('콘솔에 DUMP 출력됨');
+              } catch {}
+            }}
+          >
+            콘솔로 덤프
+          </button>
+        </div>
+      </div>
+
+      {/* 상단 상태 요약 */}
+      <div className="grid grid-cols-2 gap-3 mt-3">
+        <div className="border rounded p-2">
+          <div className="font-semibold text-gray-700 mb-1">현재 상태</div>
+          <div>
+            문서 ID: <code>{docId}</code>
+          </div>
+          <div>
+            추천 ID: <code>{recommendId || '-'}</code>
+          </div>
+          <div>본문 길이: {text.length}</div>
+          <div>선택 길이: {selection?.text?.length || 0}</div>
+          <div>
+            선택 구간: [{selection?.start},{selection?.end}]
+          </div>
+        </div>
+
+        <div className="border rounded p-2">
+          <div className="font-semibold text-gray-700 mb-1">문맥(Context)</div>
+          <div className="truncate">Prev: {context?.prev || '-'}</div>
+          <div className="truncate">Next: {context?.next || '-'}</div>
+        </div>
+
+        <div className="border rounded p-2 col-span-2">
+          <div className="font-semibold text-gray-700 mb-1">옵션</div>
+          <pre className="whitespace-pre-wrap">
+            {JSON.stringify(options, null, 2)}
+          </pre>
+        </div>
+      </div>
+
+      {/* 이벤트 로그 */}
+      <div className="mt-3">
+        <div className="font-semibold text-gray-700 mb-1">
+          이벤트 로그 ({events.length})
+        </div>
+        <div className="max-h-64 overflow-auto border rounded">
+          <table className="w-full text-left">
+            <thead className="sticky top-0 bg-white border-b">
+              <tr>
+                <th className="p-2">#</th>
+                <th className="p-2">시간</th>
+                <th className="p-2">event</th>
+                <th className="p-2">요약</th>
+              </tr>
+            </thead>
+            <tbody>
+              {events.map((e, idx) => (
+                <tr key={idx} className="border-b hover:bg-gray-100">
+                  <td className="p-2">{idx + 1}</td>
+                  <td className="p-2">{e.ts?.split('T')[1]?.slice(0, 8)}</td>
+                  <td className="p-2">
+                    <code>{e.event}</code>
+                  </td>
+                  <td className="p-2">
+                    <div className="truncate text-gray-600">
+                      {e.event === 'editor_recommend_options' &&
+                        `reco=${e.reco_category} conf=${e.confidence}`}
+                      {e.event === 'editor_run_paraphrasing' &&
+                        `phase=${e.recommend_phase} cat=${e.reco_category}`}
+                      {e.event === 'editor_selected_paraphrasing' &&
+                        `final=${e.final_category}/${e.final_language} s=${e.final_strength} t=${e.response_time_ms}ms`}
+                      {e.event === 'correction_history' &&
+                        `origLen=${e.original_text?.length} -> selLen=${e.selected_text?.length}`}
+                      {![
+                        'editor_recommend_options',
+                        'editor_run_paraphrasing',
+                        'editor_selected_paraphrasing',
+                        'correction_history',
+                      ].includes(e.event) && JSON.stringify(e)}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+              {events.length === 0 && (
+                <tr>
+                  <td className="p-2 text-gray-400" colSpan={4}>
+                    로그가 없습니다. 에디터에서 드래그/실행을 해보세요.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+        <details className="mt-2">
+          <summary className="cursor-pointer text-gray-600">
+            원본 JSON 보기
+          </summary>
+          <pre className="p-2 bg-white border rounded overflow-auto max-h-64">
+            {JSON.stringify(events, null, 2)}
+          </pre>
+        </details>
+      </div>
+    </div>
+  );
+}
+
+
+================================================================================
+FILE: frontend/src/index.css
+================================================================================
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+
+================================================================================
+FILE: frontend/src/OptionPanel.jsx
+================================================================================
+
+export default function OptionPanel({
+  selectedText,
+  category,
+  setCategory,
+  language,
+  setLanguage,
+  strength,
+  setStrength,
+  requestText,
+  setRequestText,
+  optEnabled,
+  setOptEnabled,
+  onRun,
+  onSubmitRequest,
+}) {
+  const toggleOption = (key) => {
+    setOptEnabled({ ...optEnabled, [key]: !optEnabled[key] });
+  };
+
+  return (
+    <aside className="h-full flex flex-col gap-4">
+      {/* 교정 대상 문장 미리보기 영역 */}
+      <div className="border rounded-md mt-4 p-3 text-sm text-gray-700 bg-gray-50">
+        <div className="font-semibold mb-1 text-gray-600">선택된 문장</div>
+        <div className="max-h-24 overflow-auto whitespace-pre-wrap">
+          {selectedText ? (
+            selectedText
+          ) : (
+            <span className="text-gray-400">
+              드래그한 문장이 여기에 표시됩니다.
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* 카테고리 */}
+      <div className="option-group">
+        <div className="flex items-center justify-between">
+          <label className="font-medium">카테고리</label>
+          <label className="flex items-center gap-2 text-sm">
+            <span>ON/OFF</span>
+            <input
+              type="checkbox"
+              checked={optEnabled.category}
+              onChange={() => toggleOption('category')}
+            />
+          </label>
+        </div>
+        {optEnabled.category && (
+          <select
+            className="mt-2 border rounded p-2 w-full"
+            value={category}
+            onChange={(e) => setCategory(e.target.value)}
+          >
+            <option value="none">없음</option>
+            <option value="email">이메일</option>
+            <option value="thesis">논문</option>
+            <option value="report">보고서</option>
+            <option value="article">기사</option>
+            <option value="marketing">마케팅</option>
+            <option value="customer">고객상담</option>
+          </select>
+        )}
+      </div>
+
+      {/* 언어 */}
+      <div className="option-group">
+        <div className="flex items-center justify-between">
+          <label className="font-medium">언어</label>
+          <label className="flex items-center gap-2 text-sm">
+            <span>ON/OFF</span>
+            <input
+              type="checkbox"
+              checked={optEnabled.language}
+              onChange={() => toggleOption('language')}
+            />
+          </label>
+        </div>
+        {optEnabled.language && (
+          <select
+            className="mt-2 border rounded p-2 w-full"
+            value={language}
+            onChange={(e) => setLanguage(e.target.value)}
+          >
+            <option value="ko">한국어</option>
+            <option value="en">영어</option>
+            <option value="ja">일본어</option>
+            <option value="zh">중국어</option>
+          </select>
+        )}
+      </div>
+
+      {/* 교정 강도 */}
+      <div className="option-group">
+        <div className="flex items-center justify-between">
+          <label className="font-medium">교정 강도</label>
+          <label className="flex items-center gap-2 text-sm">
+            <span>ON/OFF</span>
+            <input
+              type="checkbox"
+              checked={optEnabled.strength}
+              onChange={() => toggleOption('strength')}
+            />
+          </label>
+        </div>
+        {optEnabled.strength && (
+          <input
+            className="mt-2 w-full"
+            type="range"
+            min="0"
+            max="2"
+            step="1"
+            value={strength}
+            onChange={(e) => setStrength(parseInt(e.target.value))}
+          />
+        )}
+      </div>
+
+      {/* 실행 버튼 */}
+      <button
+        onClick={onRun}
+        className="h-10 rounded-md bg-purple-600 text-white hover:bg-purple-700"
+      >
+        실행 (교정)
+      </button>
+
+      {/* 서술형 요청 */}
+      <form onSubmit={onSubmitRequest} className="request-form mt-2">
+        <label className="font-medium">서술형 요청사항</label>
+        <textarea
+          className="flex w-full mt-2"
+          placeholder="예) 더 간결하고 자연스럽게 바꿔줘"
+          value={requestText}
+          onChange={(e) => setRequestText(e.target.value)}
+        />
+        <button
+          type="submit"
+          className="mt-2 h-10 rounded-md bg-gray-800 text-white hover:bg-gray-900 w-full"
+        >
+          요청 제출
+        </button>
+      </form>
+
+      <div className="mt-auto text-xs text-gray-500 pt-3 border-t">
+        히스토리 / 설정
+      </div>
+    </aside>
+  );
+}
+
+
+================================================================================
+FILE: frontend/src/Sidebar.jsx
+================================================================================
+
+export default function Sidebar({ onNew }) {
+  return (
+    <div className="h-full flex flex-col">
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="font-semibold">문서</h3>
+        <button
+          onClick={onNew}
+          className="text-xs h-7 px-2 rounded bg-purple-600 text-white hover:bg-purple-700"
+        >
+          새 글
+        </button>
+      </div>
+
+      {/* 간단한 목업 목록 (추후 히스토리/문서 목록 연동) */}
+      <ul className="text-sm text-gray-600 space-y-2">
+        <li className="flex items-center justify-between">
+          <span className="truncate">Draft A</span>
+          <span className="text-xs text-gray-400">오늘</span>
+        </li>
+        <li className="flex items-center justify-between">
+          <span className="truncate">Draft B</span>
+          <span className="text-xs text-gray-400">어제</span>
+        </li>
+        <li className="flex items-center justify-between">
+          <span className="truncate">Draft C</span>
+          <span className="text-xs text-gray-400">3일 전</span>
+        </li>
+      </ul>
+    </div>
+  );
+}
+
+
+================================================================================
+FILE: frontend/src/main.jsx
+================================================================================
+
+import { StrictMode } from 'react';
+import { createRoot } from 'react-dom/client';
+import './index.css';
+import App from './App.jsx';
+
+createRoot(document.getElementById('root')).render(
+  <StrictMode>
+    <App />
+  </StrictMode>
+);
+
+
+================================================================================
+FILE: frontend/src/App.jsx
+================================================================================
+
+import { useEffect, useState } from 'react';
+import { v4 as uuidv4 } from 'uuid';
+import Header from './Header.jsx';
+import Sidebar from './Sidebar.jsx';
+import Editor from './Editor.jsx';
+import OptionPanel from './OptionPanel.jsx';
+import { logEvent } from './utils/logger.js';
+import { mockCorrect } from './utils/mockCorrect.js';
+import DebugPanel from './DebugPanel.jsx';
+
+const STORAGE_KEY = 'editor:draft:v1';
+
+export default function App() {
+  // 임시 사용자 (로그인 붙기 전)
+  const user = { id: 'mock_user_001', email: 'mock@example.com' };
+
+  // 본문/선택/컨텍스트
+  const [text, setText] = useState('');
+  const [selection, setSelection] = useState({ text: '', start: 0, end: 0 });
+  const [context, setContext] = useState({ prev: '', next: '' });
+
+  // 옵션 상태
+  const [category, setCategory] = useState('none');
+  const [language, setLanguage] = useState('ko');
+  const [strength, setStrength] = useState(1);
+  const [requestText, setRequestText] = useState('');
+  const [optEnabled, setOptEnabled] = useState({
+    category: true,
+    language: true,
+    strength: true,
+  });
+
+  // Phase 식별자
+  const [docId, setDocId] = useState(() => uuidv4());
+  const [recommendId, setRecommendId] = useState(null);
+
+
+  // 자동 저장
+  useEffect(() => {
+    const t = setTimeout(() => {
+      try {
+        localStorage.setItem(STORAGE_KEY, text);
+      } catch {}
+    }, 400);
+    return () => clearTimeout(t);
+  }, [text]);
+
+  // 초기 복원
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved) setText(saved);
+    } catch {}
+  }, []);
+
+  // 새 글 시작(좌측 사이드바에서 호출)
+  const handleNewDraft = () => {
+    setText('');
+    setSelection({ text: '', start: 0, end: 0 });
+    setContext({ prev: '', next: '' });
+    setDocId(uuidv4());
+    try {
+      localStorage.removeItem(STORAGE_KEY);
+    } catch {}
+  };
+
+  // 로그아웃(헤더에서 호출) — 현재는 로컬 상태/스토리지 초기화
+  const handleLogout = () => {
+    try {
+      localStorage.clear();
+    } catch {}
+    setText('');
+    setSelection({ text: '', start: 0, end: 0 });
+    setContext({ prev: '', next: '' });
+    setCategory('none');
+    setLanguage('ko');
+    setStrength(1);
+    setRequestText('');
+    setOptEnabled({ category: true, language: true, strength: true });
+    setDocId(uuidv4());
+    setRecommendId(null);
+    alert('로그아웃 (mock): 로컬 데이터가 초기화되었습니다.');
+  };
+
+  // 문맥(prev/next) 계산
+  const updateContext = (fullText, start) => {
+    const sentences = fullText.split(/(?<=[.!?])\s+/);
+    let prev = '',
+        next = '';
+    let cumulative = 0;
+    for (let i = 0; i < sentences.length; i++) {
+      const s = sentences[i];
+      const sStart = cumulative;
+      const sEnd = cumulative + s.length;
+      if (start >= sStart && start <= sEnd) {
+        prev = sentences[i - 1] || '';
+        next = sentences[i + 1] || '';
+        break;
+      }
+      cumulative += s.length + 1;
+    }
+    setContext({ prev, next });
+  };
+
+  // 에디터에서 선택 변경되면 호출
+  const handleSelectionChange = (sel) => {
+    setSelection(sel);
+    updateContext(text, sel.start);
+
+    // Phase 1: 실시간 추천 이벤트 (mock)
+    const recoEventId = uuidv4();
+    setRecommendId(recoEventId);
+
+    logEvent({
+      event: 'editor_recommend_options', // 이벤트 내용
+      user_id: user?.id, // 사용자 ID
+      doc_id: docId, // 현재 문서 ID(uuid 형식)
+      selected_text: selection.text, // 드래그한 실제 텍스트
+      selection_start: selection.start, // 드래그 시작 인덱스
+      selection_end: selection.end, // 드래그 끝 인덱스
+      context_prev: context.prev || '', // 앞 문맥
+      context_next: context.next || '', // 뒤 문맥
+      reco_category: 'thesis', //
+      rule_hit: true,
+      vec_hit: false,
+      P_rule: 0.62,
+      P_vec: 0.74,
+      P_doc: 0.7,
+      macro_weight: 0.25,
+      confidence: 0.85,
+      auto_applied: false,
+      recommend_checkbox_status: true,
+      latency_ms: 250 + Math.floor(Math.random() * 200),
+      cache_hit: false,
+      model_version: 'phase1_v1',
+    });
+  };
+
+  // 교정 실행
+  const handleRunCorrection = async () => {
+    if (!selection.text) {
+      alert('먼저 문장을 드래그하여 선택해 주세요.');
+      return;
+    }
+
+    // 교정 직후
+    logEvent({
+      event: 'editor_run_paraphrasing',
+      source_recommend_event_id: recommendId,
+      reco_category: category,
+      recommend_phase: 'phase1.5',
+      cache_hit: false,
+      response_time_ms: 0,
+      llm_name: 'mock-gpt',
+      selected_text: selection.text,
+      selection_start: selection.start,
+      selection_end: selection.end,
+    });
+
+    const payload = {
+      user_id: user?.id,
+      doc_id: docId,
+      selected_text: selection.text,
+      context,
+      category: optEnabled.category ? category : undefined,
+      language: optEnabled.language ? language : undefined,
+      strength: optEnabled.strength ? strength : undefined,
+      style_request: requestText,
+    };
+
+    const started = performance.now();
+    const corrected = await mockCorrect(payload);
+    const elapsed = Math.round(performance.now() - started);
+
+    // 사용자 최종 채택 로그
+    logEvent({
+      event: 'editor_selected_paraphrasing',
+      source_recommend_event_id: recommendId,
+      was_recommended: true,
+      was_accepted: true,
+      final_category: category,
+      final_language: language,
+      final_strength: strength,
+      style_request: requestText,
+      selected_text: selection.text,
+      selection_start: selection.start,
+      selection_end: selection.end,
+      recommend_confidence: 0.87,
+      macro_weight: 0.25,
+      response_time_ms: elapsed,
+    });
+
+    logEvent({
+      event: 'correction_history',
+      history_id: uuidv4(),
+      user_id: user?.id,
+      doc_id: docId,
+      original_text: selection.text,
+      selected_text: corrected,
+      recommended_category: category,
+      final_category: category,
+      context_ref: `ctx_${Date.now()}`,
+      created_at: new Date().toISOString(),
+    });
+
+    const before = text.slice(0, selection.start);
+    const after = text.slice(selection.end);
+    setText(before + corrected + after);
+    setSelection({ text: '', start: 0, end: 0 });
+  };
+
+  // 서술형 요청 제출
+  const handleSubmitRequest = (e) => {
+    e.preventDefault();
+    logEvent({
+      event: 'style_request_submit',
+      user_id: user?.id,
+      doc_id: docId,
+      payload: {
+        requestText,
+        category: optEnabled.category ? category : undefined,
+        language: optEnabled.language ? language : undefined,
+        strength: optEnabled.strength ? strength : undefined,
+        selection: selection.text,
+        context,
+      },
+    });
+    alert('요청사항이 제출되었습니다. (mock)');
+    setRequestText('');
+  };
+
+  return (
+    <div className="h-screen flex flex-col">
+      {/* 상단 헤더 */}
+      <Header onLogout={handleLogout} />
+
+      {/* 본문 3열 레이아웃: Sidebar | Editor | OptionPanel */}
+      <div className="grid grid-cols-[240px_1fr_320px] gap-0 h-[calc(100vh-4rem)]">
+        <aside className="border-r p-4">
+          <Sidebar onNew={handleNewDraft} />
+        </aside>
+
+        <main className="p-4">
+          <h1 className="text-xl font-semibold mb-3">에디터</h1>
+          <Editor
+            text={text}
+            setText={setText}
+            onSelectionChange={handleSelectionChange}
+          />
+
+          {/* ✅ 디버그 패널 */}
+          <DebugPanel
+            text={text}
+            selection={selection}
+            context={context}
+            options={{
+              category,
+              language,
+              strength,
+              requestText,
+              optEnabled,
+            }}
+            docId={docId}
+            recommendId={recommendId}
+          />
+        </main>
+
+        <aside className="border-l p-4">
+          <h2 className="text-lg font-semibold mb-4">옵션 패널</h2>
+          <OptionPanel
+            selectedText={selection.text}
+            category={category}
+            setCategory={setCategory}
+            language={language}
+            setLanguage={setLanguage}
+            strength={strength}
+            setStrength={setStrength}
+            requestText={requestText}
+            setRequestText={setRequestText}
+            optEnabled={optEnabled}
+            setOptEnabled={setOptEnabled}
+            onRun={handleRunCorrection}
+            onSubmitRequest={handleSubmitRequest}
+          />
+        </aside>
+      </div>
+    </div>
+  );
+}
+
+
+================================================================================
+FILE: frontend/src/Editor.jsx
+================================================================================
+
+import { useRef } from 'react';
+
+export default function Editor({ text, setText, onSelectionChange }) {
+  const taRef = useRef(null);
+
+  // 입력창 드래그 구간 수집
+  const reportSelection = () => {
+    const ta = taRef.current;
+    if (!ta) return;
+    const start = ta.selectionStart ?? 0;
+    const end = ta.selectionEnd ?? 0;
+    const selected = start !== end ? ta.value.slice(start, end) : '';
+
+    // 드래그 구간 상위(App)로 전달
+    onSelectionChange({ text: selected, start, end });
+  };
+
+  return (
+    <textarea
+      ref={taRef}
+      className="border rounded p-3 outline-none w-full h-[calc(100vh-7rem)]"
+      placeholder="이 곳에 텍스트를 입력하고 일부를 드래그해 보세요."
+      value={text}
+      // 본문 텍스트를 상위(App)로 반영
+      onChange={(e) => setText(e.target.value)}
+      onSelect={reportSelection}
+      onKeyUp={reportSelection}
+      onMouseUp={reportSelection}
+    />
+  );
+}
+
+
+================================================================================
+FILE: frontend/src/auth/AuthContext.jsx
+================================================================================
+
+import { createContext, useContext, useEffect, useState } from 'react';
+
+const AuthCtx = createContext(null);
+const KEY = 'auth:user:v1';
+
+export function AuthProvider({ children }) {
+  const [user, setUser] = useState(null); // { id, email, name }
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(KEY);
+      if (raw) setUser(JSON.parse(raw));
+    } catch {}
+  }, []);
+
+  const login = async ({ email, password }) => {
+    // ✅ 목 로그인: 실제로는 서버에 POST /auth/login
+    if (!email || !password) throw new Error('이메일/비밀번호를 입력하세요');
+    const fakeUser = {
+      id: crypto.randomUUID(),
+      email,
+      name: email.split('@')[0],
+    };
+    setUser(fakeUser);
+    localStorage.setItem(KEY, JSON.stringify(fakeUser));
+  };
+
+  const signup = async ({ email, password }) => {
+    // ✅ 목 회원가입: 실제로는 서버에 POST /auth/signup
+    if (!email || !password) throw new Error('이메일/비밀번호를 입력하세요');
+    const fakeUser = {
+      id: crypto.randomUUID(),
+      email,
+      name: email.split('@')[0],
+    };
+    setUser(fakeUser);
+    localStorage.setItem(KEY, JSON.stringify(fakeUser));
+  };
+
+  const logout = () => {
+    setUser(null);
+    localStorage.removeItem(KEY);
+  };
+
+  return (
+    <AuthCtx.Provider value={{ user, login, signup, logout }}>
+      {children}
+    </AuthCtx.Provider>
+  );
+}
+
+export const useAuth = () => useContext(AuthCtx);
+
+
+================================================================================
+FILE: frontend/src/auth/Login.jsx
+================================================================================
+
+import { useState } from 'react';
+import { useAuth } from './AuthContext.jsx';
+
+export default function Login() {
+  const { login, signup } = useAuth();
+  const [mode, setMode] = useState('login'); // 'login' | 'signup'
+  const [email, setEmail] = useState('');
+  const [pw, setPw] = useState('');
+  const [err, setErr] = useState('');
+
+  const onSubmit = async (e) => {
+    e.preventDefault();
+    setErr('');
+    try {
+      if (mode === 'login') await login({ email, password: pw });
+      else await signup({ email, password: pw });
+    } catch (e) {
+      setErr(e.message || '오류가 발생했습니다');
+    }
+  };
+
+  return (
+    <div className="flex-1 grid place-items-center">
+      <form
+        onSubmit={onSubmit}
+        className="w-full max-w-sm border rounded-lg p-6 space-y-4"
+      >
+        <h2 className="text-lg font-semibold">
+          {mode === 'login' ? '로그인' : '회원가입'}
+        </h2>
+        <input
+          className="w-full border rounded-md p-2"
+          placeholder="이메일"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+        />
+        <input
+          type="password"
+          className="w-full border rounded-md p-2"
+          placeholder="비밀번호"
+          value={pw}
+          onChange={(e) => setPw(e.target.value)}
+        />
+        {err && <div className="text-xs text-red-600">{err}</div>}
+        <button className="w-full h-10 bg-purple-600 text-white rounded-md">
+          {mode === 'login' ? '로그인' : '회원가입'}
+        </button>
+        <button
+          type="button"
+          className="w-full h-10 bg-gray-100 rounded-md"
+          onClick={() => setMode(mode === 'login' ? 'signup' : 'login')}
+        >
+          {mode === 'login' ? '회원가입으로' : '로그인으로'}
+        </button>
+      </form>
+    </div>
+  );
+}
+
+
+================================================================================
+FILE: frontend/src/utils/logger.js
+================================================================================
+
+export async function logEvent(eventData) {
+  try {
+    // 전역 버퍼에 적재 (페이지에서 즉시 확인용)
+    if (!window.__eventLog) window.__eventLog = [];
+    window.__eventLog.push({
+      ts: new Date().toISOString(),
+      ...eventData,
+    });
+
+    // 콘솔 확인
+    console.log('[Event Log]', eventData);
+
+    // 실제 서버 연동 시:
+    /*
+    await fetch("/api/log", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(eventData),
+    });
+    */
+  } catch (err) {
+    console.error('Logging failed:', err);
+  }
+}
+
+
+================================================================================
+FILE: frontend/src/utils/mockCorrect.js
+================================================================================
+
+export async function mockCorrect(payload) {
+  console.log('[MockCorrect Input]', payload);
+
+  // 네트워크 지연 유사 효과
+  await new Promise((r) => setTimeout(r, 300 + Math.random() * 500));
+
+  const { selected_text, strength, style_request } = payload;
+  let result = selected_text ?? '';
+
+  switch (strength) {
+    case 0:
+      result = result.trim() + ' (가벼운 교정)';
+      break;
+    case 1:
+      result = `[중간 교정] ${result.replace(/\s+/g, ' ').trim()}`;
+      break;
+    case 2:
+      result = `[강한 교정] ${result.toUpperCase()}`;
+      break;
+    default:
+      result = result;
+  }
+
+  if (style_request && style_request.trim().length > 0) {
+    result += ` [요청사항 반영: ${style_request}]`;
+  }
+
+  console.log('[MockCorrect Output]', result);
+  return result;
+}
+
+
+================================================================================
+FILE: frontend/src/assets/react.svg
+================================================================================
+
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" aria-hidden="true" role="img" class="iconify iconify--logos" width="35.93" height="32" preserveAspectRatio="xMidYMid meet" viewBox="0 0 256 228"><path fill="#00D8FF" d="M210.483 73.824a171.49 171.49 0 0 0-8.24-2.597c.465-1.9.893-3.777 1.273-5.621c6.238-30.281 2.16-54.676-11.769-62.708c-13.355-7.7-35.196.329-57.254 19.526a171.23 171.23 0 0 0-6.375 5.848a155.866 155.866 0 0 0-4.241-3.917C100.759 3.829 77.587-4.822 63.673 3.233C50.33 10.957 46.379 33.89 51.995 62.588a170.974 170.974 0 0 0 1.892 8.48c-3.28.932-6.445 1.924-9.474 2.98C17.309 83.498 0 98.307 0 113.668c0 15.865 18.582 31.778 46.812 41.427a145.52 145.52 0 0 0 6.921 2.165a167.467 167.467 0 0 0-2.01 9.138c-5.354 28.2-1.173 50.591 12.134 58.266c13.744 7.926 36.812-.22 59.273-19.855a145.567 145.567 0 0 0 5.342-4.923a168.064 168.064 0 0 0 6.92 6.314c21.758 18.722 43.246 26.282 56.54 18.586c13.731-7.949 18.194-32.003 12.4-61.268a145.016 145.016 0 0 0-1.535-6.842c1.62-.48 3.21-.974 4.76-1.488c29.348-9.723 48.443-25.443 48.443-41.52c0-15.417-17.868-30.326-45.517-39.844Zm-6.365 70.984c-1.4.463-2.836.91-4.3 1.345c-3.24-10.257-7.612-21.163-12.963-32.432c5.106-11 9.31-21.767 12.459-31.957c2.619.758 5.16 1.557 7.61 2.4c23.69 8.156 38.14 20.213 38.14 29.504c0 9.896-15.606 22.743-40.946 31.14Zm-10.514 20.834c2.562 12.94 2.927 24.64 1.23 33.787c-1.524 8.219-4.59 13.698-8.382 15.893c-8.067 4.67-25.32-1.4-43.927-17.412a156.726 156.726 0 0 1-6.437-5.87c7.214-7.889 14.423-17.06 21.459-27.246c12.376-1.098 24.068-2.894 34.671-5.345a134.17 134.17 0 0 1 1.386 6.193ZM87.276 214.515c-7.882 2.783-14.16 2.863-17.955.675c-8.075-4.657-11.432-22.636-6.853-46.752a156.923 156.923 0 0 1 1.869-8.499c10.486 2.32 22.093 3.988 34.498 4.994c7.084 9.967 14.501 19.128 21.976 27.15a134.668 134.668 0 0 1-4.877 4.492c-9.933 8.682-19.886 14.842-28.658 17.94ZM50.35 144.747c-12.483-4.267-22.792-9.812-29.858-15.863c-6.35-5.437-9.555-10.836-9.555-15.216c0-9.322 13.897-21.212 37.076-29.293c2.813-.98 5.757-1.905 8.812-2.773c3.204 10.42 7.406 21.315 12.477 32.332c-5.137 11.18-9.399 22.249-12.634 32.792a134.718 134.718 0 0 1-6.318-1.979Zm12.378-84.26c-4.811-24.587-1.616-43.134 6.425-47.789c8.564-4.958 27.502 2.111 47.463 19.835a144.318 144.318 0 0 1 3.841 3.545c-7.438 7.987-14.787 17.08-21.808 26.988c-12.04 1.116-23.565 2.908-34.161 5.309a160.342 160.342 0 0 1-1.76-7.887Zm110.427 27.268a347.8 347.8 0 0 0-7.785-12.803c8.168 1.033 15.994 2.404 23.343 4.08c-2.206 7.072-4.956 14.465-8.193 22.045a381.151 381.151 0 0 0-7.365-13.322Zm-45.032-43.861c5.044 5.465 10.096 11.566 15.065 18.186a322.04 322.04 0 0 0-30.257-.006c4.974-6.559 10.069-12.652 15.192-18.18ZM82.802 87.83a323.167 323.167 0 0 0-7.227 13.238c-3.184-7.553-5.909-14.98-8.134-22.152c7.304-1.634 15.093-2.97 23.209-3.984a321.524 321.524 0 0 0-7.848 12.897Zm8.081 65.352c-8.385-.936-16.291-2.203-23.593-3.793c2.26-7.3 5.045-14.885 8.298-22.6a321.187 321.187 0 0 0 7.257 13.246c2.594 4.48 5.28 8.868 8.038 13.147Zm37.542 31.03c-5.184-5.592-10.354-11.779-15.403-18.433c4.902.192 9.899.29 14.978.29c5.218 0 10.376-.117 15.453-.343c-4.985 6.774-10.018 12.97-15.028 18.486Zm52.198-57.817c3.422 7.8 6.306 15.345 8.596 22.52c-7.422 1.694-15.436 3.058-23.88 4.071a382.417 382.417 0 0 0 7.859-13.026a347.403 347.403 0 0 0 7.425-13.565Zm-16.898 8.101a358.557 358.557 0 0 1-12.281 19.815a329.4 329.4 0 0 1-23.444.823c-7.967 0-15.716-.248-23.178-.732a310.202 310.202 0 0 1-12.513-19.846h.001a307.41 307.41 0 0 1-10.923-20.627a310.278 310.278 0 0 1 10.89-20.637l-.001.001a307.318 307.318 0 0 1 12.413-19.761c7.613-.576 15.42-.876 23.31-.876H128c7.926 0 15.743.303 23.354.883a329.357 329.357 0 0 1 12.335 19.695a358.489 358.489 0 0 1 11.036 20.54a329.472 329.472 0 0 1-11 20.722Zm22.56-122.124c8.572 4.944 11.906 24.881 6.52 51.026c-.344 1.668-.73 3.367-1.15 5.09c-10.622-2.452-22.155-4.275-34.23-5.408c-7.034-10.017-14.323-19.124-21.64-27.008a160.789 160.789 0 0 1 5.888-5.4c18.9-16.447 36.564-22.941 44.612-18.3ZM128 90.808c12.625 0 22.86 10.235 22.86 22.86s-10.235 22.86-22.86 22.86s-22.86-10.235-22.86-22.86s10.235-22.86 22.86-22.86Z"></path></svg>
+
+================================================================================
+FILE: docs/phase1/phase1-roadmap.md
+================================================================================
+
+이 로드맵은 개발팀 간의 의존성(Dependency)을 최소화하고, "API 개발 → 테스트 데이터 준비 → P_vec 튜닝 → 전체 체인 통합"의 자연스러운 흐름을 따릅니다.
+
+---
+
+## 🗺️ Sentencify Phase 1: 실행 순서 기반 로드맵 (v1.1)
+
+Phase 1의 목표는 **(1) 실시간 추천 (`P_rule`+`P_vec`)**과 **(2) 데이터 수집 체인 (`A-B-C-D-E`)**을 완성하는 것입니다.
+
+### 📍 Step 0: 개발 착수 (Foundation)
+
+모든 개발의 전제 조건이며, 병목 현상을 막기 위해 가장 먼저 완료되어야 합니다.
+
+1. **인프라 구축 (WBS TODO 12)**
+    - `docker-compose.mini.yml`을 완성하고 실행합니다.
+    - **핵심 서비스 5개:** `FastAPI`, `Kafka`, `MongoDB` (D 저장용), `Qdrant` (E 저장용), `Redis` (LLM 캐시용).
+2. **One-Way Door 결정 (WBS TODO 10, 3)**
+    - **임베딩 모델 확정:** `P_vec` 계산에 사용할 `embedding_v1` 모델(예: `all-MiniLM-L6-v2`)을 최종 선택합니다. (이 결정이 Step 3의 작업을 정의합니다)
+    - **LLM 엔드포인트 확정:** `B` 이벤트 컨슈머가 호출할 `Paraphrasing LLM` (예: OpenAI API) 엔드포인트를 확정합니다.
+
+### 📍 Step 1: 실시간 API 핵심 구현 (API-Side)
+
+API 서버가 최소 기능으로 동작하고, 모든 후속 작업(컨슈머, FE)의 기준점을 제공합니다.
+
+1. **API Contract & Logic (TODO 1, 2)**
+    - `POST /recommend` 엔드포인트와 Pydantic 스키마(`Request`/`Response`)를 정의합니다.
+    - `context_full`, `context_hash` 생성 로직을 구현합니다.
+2. **추천 엔진 스텁(Stub) 구현 (TODO 2)**
+    - `P_rule` (규칙 엔진): 하드코딩된 기본값(예: `{"email": 0.5}`)을 반환합니다.
+    - `P_vec` (벡터 검색): Qdrant에 빈 값을 검색하거나 기본값을 반환합니다.
+3. **핵심 ID 생성 및 반환 (TODO 2)**
+    - `insert_id` (UUID)와 `recommend_session_id` (UUID)를 생성하여 `RecommendResponse`에 포함시킵니다.
+4. **A/I/E 이벤트 발행 (TODO 2, 4)**
+    - FE에 `200 OK` 응답을 반환한 직후, **3개 이벤트(A, I, E)를 Kafka로 `produce`*합니다. (Fire-and-Forget)
+
+> [Step 1 완료 기준]POST /recommend 호출 시, (1) 가짜 추천 값과 (2) insert_id, session_id가 반환되며, (3) Kafka 토픽에 A, I, E 이벤트가 쌓입니다.
+> 
+
+### 📍 Step 2: FE-BE 계약 확정 (The Contract)
+
+Step 1이 완료되는 즉시 FE팀과 백엔드팀이 이 계약을 확정하여 병렬 개발을 시작합니다.
+
+1. **API 스키마 고정 (TODO 1)**
+    - Step 1에서 만든 `RecommendRequest` / `RecommendResponse` 스키마를 API 명세서(Swagger/Notion)로 확정합니다.
+2. **FE 역할 정의 (명세서 4.3)**
+    - FE는 다음 3가지 역할을 수행하기로 확정합니다.
+        1. `/recommend` 응답에서 `insert_id`와 `recommend_session_id`를 FE 내부 상태에 저장.
+        2. '실행' 시, 저장된 2개 ID를 포함하여 `B (editor_run_paraphrasing)` 이벤트를 Kafka로 발행.
+        3. '선택' 시, 저장된 2개 ID와 `selected_option_index` 등을 포함하여 `C (editor_selected_paraphrasing)` 이벤트를 Kafka로 발행.
+
+### 📍 Step 3: 테스트 데이터 준비 및 P_vec 고도화
+
+API가 동작하는 동안, `P_vec`의 정확도를 높이기 위한 데이터를 준비하고 로직을 튜닝합니다.
+
+1. **Synthetic DB 생성/적재 (WBS TODO 10)**
+    - `Step 0`에서 확정한 `embedding_v1` 모델로 가상 데이터(Synthetic DB)의 임베딩을 생성합니다.
+    - 이 벡터 데이터(임베딩, `embedding_version: "v1.0"`)를 `Qdrant`에 미리 적재합니다. (명세서 2.3)
+2. **`P_vec` 로직 고도화 (WBS TODO 2)**
+    - `Step 1`에서 만든 `P_vec` 스텁(Stub)을 실제 `Qdrant` 검색 로직으로 교체합니다.
+    - `Synthetic DB`를 기반으로 `P_vec` 점수 계산 로직을 튜닝합니다.
+
+### 📍 Step 4: 비동기 컨슈머 구현 (Data Chain)
+
+`Step 2`의 계약에 따라 FE와 API가 발행할 이벤트를 처리하는 백엔드 로직을 구현합니다.
+
+1. **`E` 컨슈머 구현 (WBS TODO 4)**
+    - `E (context_block)` 토픽을 구독(subscribe)하여 `Qdrant`에 `upsert`합니다. (PK: `context_hash`)
+2. **`B` 컨슈머 구현 (WBS TODO 3)**
+    - `B (editor_run_paraphrasing)` 토픽을 구독합니다.
+    - `Step 0`에서 확정한 `Paraphrasing LLM`을 호출하고, `Redis`에 응답을 캐시합니다.
+3. **`C` 컨슈머 구현 (WBS TODO 8)**
+    - `C (editor_selected_paraphrasing)` 토픽을 구독합니다.
+    - `C.was_accepted == true`인 경우, `MongoDB`에 `D(correction_history)` 문서를 생성(insert)합니다.
+    - (선택적) 생성된 `D._id`를 `C.correction_history_id` 필드에 넣어 다시 Kafka `C-log` 토픽에 발행하거나 BigQuery에 저장합니다. (명세서 4.3 Rule 3)
+
+### 📍 Step 5: E2E 통합 및 Phase 1 완료 (DoD Check)
+
+모든 컴포넌트(FE, API, Consumers)를 통합하고, Phase 1의 공식 완료 조건을 검증합니다.
+
+1. **FE-BE-Consumer 전체 연동**
+    - `Step 2`의 계약대로 FE 개발을 완료하고 전체 시스템을 통합합니다.
+2. **Phase 1 완료 기준 (7개) 검증 (Definition of Done)**
+    - 사용자 시나리오(드래그 → 실행 → 선택)를 1회 수행한 뒤, 아래 7개 항목이 모두 성공하는지 검증합니다.
+    - ✅ **`/recommend` API 300ms 내 응답** (명세서 2.4)
+    - ✅ **`A/I/E` 이벤트가 모두 Kafka에 정상 발행**
+    - ✅ **`E` Consumer가 Qdrant에 context 저장** (WBS TODO 4)
+    - ✅ **`B` Consumer가 LLM 호출 → Redis 저장** (WBS TODO 3)
+    - ✅ **`C` Consumer가 D(correction_history) 생성** (in MongoDB) (WBS TODO 8)
+    - ✅ **`FE`가 `insert_id`/`session_id`를 정상 전달** (B, C 이벤트 Payload 검증)
+    - ✅ **`A→B→C→D→E` 전체 체인이 한 세션에서 끊김 없이 생성됨** (명세서 2.4)
+
+> [Phase 1 완료]
+위 7개 검증 항목이 모두 통과되면, Phase 1의 공식 목표("실시간 추천 + Hooks 수집")가 달성됩니다.
+>
+
+================================================================================
+FILE: .devcontainer/devcontainer.json
+================================================================================
+
+{
+  "name": "sentencify-mvp-dev",
+  "dockerComposeFile": [
+    "../docker-compose.mini.yml"
+  ],
+  "service": "api",
+  "workspaceFolder": "/workspace",
+  
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-toolsai.jupyter",
+        "ms-azuretools.vscode-docker",
+        "batisteo.vscode-django"
+      ]
+    }
+  },
+
+  "postCreateCommand": "pip install --no-cache-dir -r requirements.txt",
+
+  "remoteUser": "root"
+}
+
+
+================================================================================
+FILE: api/requirements.txt
+================================================================================
+
+fastapi
+uvicorn[standard]
+pydantic
+kafka-python
+redis
+qdrant-client
+
+
+================================================================================
+FILE: api/Dockerfile
+================================================================================
+
+FROM python:3.11-slim
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY app ./app
+
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+
+================================================================================
+FILE: api/app/main.py
+================================================================================
+
+from fastapi import FastAPI
+from pydantic import BaseModel
+import uuid
+
+class Context(BaseModel):
+    prev: str | None = None
+    next: str | None = None
+
+class RecommendRequest(BaseModel):
+    doc_id: str
+    user_id: str
+    selected_text: str
+    context: Context
+
+class RecommendOption(BaseModel):
+    category: str
+    strength: str | None = None
+
+class RecommendResponse(BaseModel):
+    insert_id: str
+    recommend_session_id: str
+    reco_options: list[RecommendOption]
+
+app = FastAPI()
+
+@app.post("/recommend", response_model=RecommendResponse)
+async def recommend(req: RecommendRequest):
+    insert_id = str(uuid.uuid4())
+    recommend_session_id = str(uuid.uuid4())
+    options = [
+        RecommendOption(category="thesis", strength="moderate"),
+        RecommendOption(category="email", strength="weak"),
+    ]
+
+    return RecommendResponse(
+        insert_id=insert_id,
+        recommend_session_id=recommend_session_id,
+        reco_options=options,
+    )
+
