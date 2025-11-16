@@ -16,6 +16,8 @@ services:
       - mongo
       - qdrant
       - redis
+    volumes:
+      - ../:/workspace
     networks:
       - sentencify-net
 
