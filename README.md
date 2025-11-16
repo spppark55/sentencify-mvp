@@ -1,137 +1,203 @@
-# yeardream_final
 
-📘 Sentencify MVP – 로컬 MSA 개발 환경
+---
 
-Sentencify Phase 1(실시간 추천 + 데이터 수집)을 개발하기 위한 로컬 MSA + DevContainer 기반 환경입니다.
+# Sentencify MVP – 개발 환경 안내
 
-FastAPI API 서버는 VS Code DevContainer 안에서 개발하고,
-Kafka / Mongo / Qdrant / Redis 등 인프라는 Docker Compose로 실행합니다.
+Sentencify Phase 1(실시간 추천 및 데이터 수집)을 위한 로컬 개발 환경입니다.
+본 프로젝트는 **Backend (FastAPI)**, **Frontend (React/Vite)**, **Infra(Kafka, MongoDB, Qdrant, Redis)** 를 Docker Compose 기반으로 통합 실행합니다.
+모든 개발은 VS Code Dev Containers 또는 로컬 환경 중 선택하여 진행할 수 있습니다.
 
-🚀 1. 사전 준비
+---
 
-팀원이 이 레포를 처음 가져올 때 필요한 것:
+## 1. 구성 요소 (총 6개 서비스)
 
-Git
+`docker-compose.mini.yml` 파일은 다음 6개의 컨테이너 서비스를 동시에 실행합니다.
 
-Docker Desktop
+1. `api`
+   FastAPI 기반의 추천 API 서버
+   주소: `http://localhost:8000`
 
-VS Code
+2. `frontend`
+   React + Vite 기반 사용자 인터페이스
+   주소: `http://localhost:5173`
 
-VS Code 확장
+3. `kafka`
+   이벤트 스트림(A / B / C / E / I 이벤트) 처리용 메시지 큐
 
-Dev Containers (ms-vscode-remote.remote-containers)
+4. `mongo`
+   Ground Truth 저장소 (`D.correction_history`)
 
-🚀 2. 레포 클론
-git clone https://github.com/<USER_OR_ORG>/sentencify-mvp.git
-cd sentencify-mvp
+5. `qdrant`
+   문맥 벡터 저장소 (`E.context_block`)
 
-🚀 3. MSA 인프라 실행 (Docker Compose)
+6. `redis`
+   LLM 응답 캐시 저장소 (B 이벤트용)
 
-루트 폴더에서 실행:
+모든 서비스는 `sentencify-net` 네트워크를 통해 서로 서비스 이름(kafka, mongo 등)만으로 통신합니다.
 
-docker compose -f docker-compose.mini.yml up -d --build
+---
 
+## 2. 시작하기
 
-이 명령으로 다음 5개 컨테이너가 실행됩니다:
+개발을 시작하는 방법은 두 가지입니다.
+가급적 **VS Code Dev Container 방식(워크플로우 A)**을 권장합니다.
 
-api (FastAPI – DevContainer에서 개발용)
+### 워크플로우 A. VS Code Dev Container 사용 (권장)
 
-kafka
+로컬 시스템에 Python 또는 Node를 설치하지 않아도 되고, 팀 전체가 동일한 개발 환경을 보장할 수 있습니다.
 
-mongo
+**사전 요구사항**
 
-qdrant
+1. Docker Desktop (실행 중이어야 함)
+2. VS Code
+3. VS Code 확장: Dev Containers
 
-redis
+**실행 단계**
 
-상태 확인:
+1. 레포지토리 클론
 
-docker ps
+   ```bash
+   git clone https://github.com/<ORG_OR_USER>/sentencify-mvp.git
+   cd sentencify-mvp
+   ```
 
+2. VS Code로 폴더 열기
 
-중지:
+   ```bash
+   code .
+   ```
 
-docker compose -f docker-compose.mini.yml down
+3. 하단 알림에서
+   **"Reopen in Container"** 선택
+   (또는 `Cmd + Shift + P` → `Dev Containers: Reopen in Container`)
 
-🧩 4. FastAPI 개발 (VS Code Dev Container)
+4. VS Code가 자동으로 다음을 수행
 
-FastAPI 코드는 DevContainer 내부에서 실행해야 함
-(로컬 Python 환경을 사용하지 않음)
+   * docker compose up 실행
+   * api 컨테이너 내부로 VS Code 연결
+   * api 컨테이너 내부에서 개발 가능해짐
 
-실행 방법
+**개발 환경 구동 완료 기준**
 
-VSCode에서 sentencify-mvp 폴더를 열기
+* 6개 서비스(api, frontend, kafka, mongo, qdrant, redis)가 실행됨
+* VS Code 터미널은 자동으로 api 컨테이너 내부 쉘을 제공함
 
-명령 팔레트 열기
+---
 
-macOS: Cmd + Shift + P
+### 워크플로우 B. 로컬 환경에서 직접 실행 (선택)
 
-Windows: Ctrl + Shift + P
+VS Code Dev Container를 사용하지 않고 직접 실행하는 방법입니다.
 
-Dev Containers: Reopen in Container 선택
+1. Docker Compose 인프라 실행
 
-VS Code가 자동으로 API 컨테이너 환경으로 들어감
+   ```bash
+   docker compose -f docker-compose.mini.yml up -d --build
+   ```
 
-🧪 5. FastAPI 서버 실행
+2. 프론트엔드를 로컬에서 직접 실행하고 싶을 경우
 
-DevContainer 안에서 터미널을 열고:
+   ```bash
+   cd frontend
+   npm install
+   npm run dev
+   ```
 
-uvicorn app.main:app --host 0.0.0.0 --port 8000
+---
 
+## 3. 접속 및 상태 확인
 
-브라우저에서 접속:
+서비스 실행 후 아래 주소에서 정상 작동 여부를 확인할 수 있습니다.
 
-👉 http://localhost:8000/docs
+* 프론트엔드
+  `http://localhost:5173`
 
-정상적으로 보이면 다음 값이 응답됩니다:
+* 백엔드 FastAPI 문서(Swagger)
+  `http://localhost:8000/docs`
 
-insert_id
+* 실행 중인 컨테이너 확인
 
-recommend_session_id
+  ```bash
+  docker ps
+  ```
 
-더미 reco_options 리스트
+* 컨테이너 전체 중지
 
-➡️ 이것이 Phase 1 Step 1 “API 최소 기능” 성공 기준입니다.
+  ```bash
+  docker compose -f docker-compose.mini.yml down
+  ```
 
-📁 디렉터리 구조
+---
+
+## 4. 개발 워크플로우 (Hot Reloading)
+
+`docker-compose.mini.yml`의 볼륨 설정으로 인해, 로컬에서 파일을 수정하면 컨테이너 내부 애플리케이션이 자동으로 재시작됩니다.
+
+* **프론트엔드 (React/Vite)**
+  `frontend/src` 내부 파일 수정 시 브라우저 자동 새로고침
+
+* **백엔드 (FastAPI)**
+  `api/app/main.py` 수정 시 `uvicorn` 자동 재시작
+  (Dev Container 사용 시 VS Code 터미널에서 로그 확인 가능)
+
+---
+
+## 5. 디렉터리 구조
+
+```
 sentencify-mvp/
-├─ api/
-│   ├─ app/
-│   │   └─ main.py
-│   ├─ requirements.txt
-│   └─ Dockerfile
-├─ .devcontainer/
-│   └─ devcontainer.json
-├─ docker-compose.mini.yml
-└─ README.md
+├── .devcontainer/
+│   └── devcontainer.json
+├── api/
+│   ├── app/
+│   │   └── main.py
+│   ├── requirements.txt
+│   └── Dockerfile
+├── docs/
+│   └── phase1/
+│       └── phase1-roadmap.md
+├── frontend/
+│   ├── src/
+│   │   ├── utils/
+│   │   ├── App.jsx
+│   │   └── ...
+│   ├── package.json
+│   ├── vite.config.js
+│   └── Dockerfile
+├── docker-compose.mini.yml
+└── .gitignore
+```
 
-📝 DevContainer 관리 규칙
+---
 
-.devcontainer/devcontainer.json 레포에 포함(커밋) 해야 함
+## 6. Phase 1 진행 상황 요약
 
-이유: 팀원이 Reopen in Container만 하면 동일한 개발 환경을 자동 복원
+### 완료된 항목
 
-일반적으로 .gitignore에 넣지 않음
+* 인프라 구축
+  (FastAPI, FE, Kafka, MongoDB, Qdrant, Redis 통합 실행)
+* FastAPI 최소 스켈레톤 (`POST /recommend`)
 
-🎯 Phase 1 진행 상황 요약
-✔ 현재 이 레포로 가능한 것
+### 필요 작업 (진행 예정)
 
-Step 0: MSA 인프라 구축 완료
+1. **API 고도화**
 
-Step 1: FastAPI 기본 스켈레톤 동작
+   * `P_rule`, `P_vec` 추천 로직 구현
+   * Kafka Producer 로직(A/I/E 이벤트) 추가
 
-개발 환경 자동화(DevContainer) 완성
+2. **FE ↔ BE 계약 확정**
 
-🔜 다음 해야 할 일
+   * FE가 `/recommend` API 호출하도록 변경
+   * B/C 이벤트를 통해 실행/선택 로그 발행
 
-P_rule / P_vec 실제 로직 구현
+3. **Vector DB 준비**
 
-Kafka Producer/Consumer 코드 추가
+   * Synthetic DB 생성
+   * Qdrant에 임베딩 적재
 
-FE와 B/C 이벤트 스키마 확정 및 연동
+4. **비동기 컨슈머 구현**
 
-📄 기술 로드맵
+   * B, C, E 이벤트 처리 컨슈머 개발
 
-긴 Phase 1 로드맵(기술 아키텍처, Step 0~5)은 별도 문서로 분리되었습니다.
+Phase 1의 공식 완료 기준(DoD)은 phase1-roadmap.md 문서를 참고합니다.
 
-👉 docs/phase1-roadmap.md (추가 예정)
+---
