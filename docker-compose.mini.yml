@@ -21,6 +21,23 @@ services:
     networks:
       - sentencify-net
 
+  frontend:
+    build:
+      context: ./frontend  # frontend 폴더의
+      dockerfile: Dockerfile # Dockerfile을 사용
+    ports:
+      - "5173:5173" # Vite 포트를 로컬 PC와 연결
+    volumes:
+      # [중요] 소스 코드를 마운트하여 "핫 리로딩(Hot Reloading)" 활성화
+      - ./frontend:/app
+      # [중요] /app/node_modules는 마운트에서 제외하여,
+      # 컨테이너 내부의 node_modules를 사용 (성능 및 호환성)
+      - /app/node_modules
+    networks:
+      - sentencify-net
+    depends_on:
+      - api # API가 실행된 후 frontend 실행
+
   kafka:
     image: apache/kafka:latest
     ports:
@@ -37,7 +54,7 @@ services:
       KAFKA_CFG_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
       KAFKA_CFG_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
     volumes:
-      - kafka-data:/bitnami/kafka
+      - kafka-data:/tmp/kafka-logs
     networks:
       - sentencify-net
 
