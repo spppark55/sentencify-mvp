@@ -117,6 +117,44 @@ Content-Type: application/json
 }
 ```
 
+#### 3.1.3 Phase 1 Step 1 – 실제 구현 규칙 정리
+
+- **요청 필드 사용 규칙**
+  - `doc_id`  
+    - FE가 문서 최초 생성 시 `uuid.v4()`로 생성하여 유지.  
+  - `user_id`  
+    - 로그인 유저 ID, 미로그인 시 `"anonymous"` 또는 임시 ID.  
+  - `selected_text`  
+    - 드래그된 실제 문자열 그대로 전송.  
+  - `context_prev` / `context_next`  
+    - FE에서 prev/next 문장을 계산해 문자열로 보낸다.  
+    - BE에서는 이를 사용해  
+      `context_full = context_prev + "\n" + selected_text + "\n" + context_next`  
+      를 조립한다(null/빈 문자열은 자동으로 제외).  
+  - `field`  
+    - 옵션 패널에서 카테고리가 `none`이 아니고 ON인 경우만 값 전송, 아니면 `null`.  
+  - `language` / `intensity`  
+    - ON/OFF 스위치가 켜져 있을 때만 값 전송, 아니면 `null`.  
+    - `intensity`는 FE 슬라이더(0/1/2)를 `weak/moderate/strong`으로 매핑.  
+  - `user_prompt`  
+    - 서술형 스타일 요청 텍스트. 입력이 없다면 `null`.
+
+- **응답 필드 FE 사용 방식 (현재 구현 기준)**
+  - `insert_id`  
+    - A 이벤트의 PK.  
+    - FE에서 B/C 이벤트를 로깅할 때 `source_recommend_event_id`로 사용.  
+  - `recommend_session_id`  
+    - 한 번의 드래그 → 실행 → 선택 플로우를 묶는 세션 ID.  
+    - FE에서는 `recommendId` 상태로 유지, B/C 이벤트에 그대로 포함.  
+  - `reco_options`  
+    - 현재 Step1에서는 길이 1인 배열이지만, 향후 다수 후보를 반환 가능.  
+    - FE는 `reco_options[0]`의 `category`/`language`를 기본 값으로 옵션 패널에 세팅.  
+  - `P_rule` / `P_vec`  
+    - 모델/데이터 팀 디버깅용 점수. Phase 1에서는 FE에서 DebugPanel/로그에만 표시.  
+  - `context_hash`  
+    - `hash(doc_id + context_full)`로 계산되는 값.  
+    - FE에서는 상태로만 저장하여, B/C 이벤트 및 이후 로그/ETL에서 사용할 수 있도록 한다.
+
 #### 3.2 A/B/C 이벤트 JSON 스키마
 
 ##### 3.2.1 A. editor_recommend_options

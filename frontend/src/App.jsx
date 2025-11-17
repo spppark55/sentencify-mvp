@@ -7,6 +7,7 @@ import OptionPanel from './OptionPanel.jsx';
 import { logEvent } from './utils/logger.js';
 import { mockCorrect } from './utils/mockCorrect.js';
 import DebugPanel from './DebugPanel.jsx';
+import { postRecommend } from './utils/api.js';
 
 const STORAGE_KEY = 'editor:draft:v1';
 
@@ -32,7 +33,10 @@ export default function App() {
 
   // Phase 식별자
   const [docId, setDocId] = useState(() => uuidv4());
-  const [recommendId, setRecommendId] = useState(null);
+  const [recommendId, setRecommendId] = useState(null); // recommend_session_id
+  const [recommendInsertId, setRecommendInsertId] = useState(null); // A.insert_id
+  const [recoOptions, setRecoOptions] = useState([]);
+  const [contextHash, setContextHash] = useState(null);
 
 
   // 자동 저장
@@ -59,6 +63,10 @@ export default function App() {
     setSelection({ text: '', start: 0, end: 0 });
     setContext({ prev: '', next: '' });
     setDocId(uuidv4());
+    setRecommendId(null);
+    setRecommendInsertId(null);
+    setRecoOptions([]);
+    setContextHash(null);
     try {
       localStorage.removeItem(STORAGE_KEY);
     } catch {}
@@ -99,41 +107,81 @@ export default function App() {
       }
       cumulative += s.length + 1;
     }
-    setContext({ prev, next });
+    const ctx = { prev, next };
+    setContext(ctx);
+    return ctx;
   };
 
   // 에디터에서 선택 변경되면 호출
-  const handleSelectionChange = (sel) => {
+  const handleSelectionChange = async (sel) => {
     setSelection(sel);
-    updateContext(text, sel.start);
+    const ctx = updateContext(text, sel.start);
 
-    // Phase 1: 실시간 추천 이벤트 (mock)
-    const recoEventId = uuidv4();
-    setRecommendId(recoEventId);
+    if (!sel.text) {
+      setRecommendId(null);
+      setRecommendInsertId(null);
+      setRecoOptions([]);
+      setContextHash(null);
+      return;
+    }
 
-    logEvent({
-      event: 'editor_recommend_options', // 이벤트 내용
-      user_id: user?.id, // 사용자 ID
-      doc_id: docId, // 현재 문서 ID(uuid 형식)
-      selected_text: selection.text, // 드래그한 실제 텍스트
-      selection_start: selection.start, // 드래그 시작 인덱스
-      selection_end: selection.end, // 드래그 끝 인덱스
-      context_prev: context.prev || '', // 앞 문맥
-      context_next: context.next || '', // 뒤 문맥
-      reco_category: 'thesis', //
-      rule_hit: true,
-      vec_hit: false,
-      P_rule: 0.62,
-      P_vec: 0.74,
-      P_doc: 0.7,
-      macro_weight: 0.25,
-      confidence: 0.85,
-      auto_applied: false,
-      recommend_checkbox_status: true,
-      latency_ms: 250 + Math.floor(Math.random() * 200),
-      cache_hit: false,
-      model_version: 'phase1_v1',
-    });
+    const intensityMap = ['weak', 'moderate', 'strong'];
+    const intensityLabel =
+      typeof strength === 'number'
+        ? intensityMap[strength] || 'moderate'
+        : 'moderate';
+
+    const payload = {
+      doc_id: docId,
+      user_id: user?.id ?? 'anonymous',
+      selected_text: sel.text,
+      context_prev: ctx.prev || null,
+      context_next: ctx.next || null,
+      field: optEnabled.category && category !== 'none' ? category : null,
+      language: optEnabled.language ? language : null,
+      intensity: optEnabled.strength ? intensityLabel : null,
+      user_prompt: requestText || null,
+    };
+
+    try {
+      const res = await postRecommend(payload);
+
+      setRecommendId(res.recommend_session_id);
+      setRecommendInsertId(res.insert_id);
+      setRecoOptions(res.reco_options || []);
+      setContextHash(res.context_hash || null);
+
+      const topOption = res.reco_options?.[0];
+      if (topOption?.category && optEnabled.category) {
+        setCategory(topOption.category);
+      }
+      if (topOption?.language && optEnabled.language) {
+        setLanguage(topOption.language);
+      }
+
+      logEvent({
+        event: 'editor_recommend_options',
+        user_id: user?.id,
+        doc_id: docId,
+        selected_text: sel.text,
+        selection_start: sel.start,
+        selection_end: sel.end,
+        context_prev: ctx.prev || '',
+        context_next: ctx.next || '',
+        recommend_session_id: res.recommend_session_id,
+        source_recommend_event_id: res.insert_id,
+        reco_options: res.reco_options,
+        P_rule: res.P_rule,
+        P_vec: res.P_vec,
+        context_hash: res.context_hash,
+        model_version: res.model_version,
+        api_version: res.api_version,
+        schema_version: res.schema_version,
+        embedding_version: res.embedding_version,
+      });
+    } catch (err) {
+      console.error('Failed to call /recommend', err);
+    }
   };
 
   // 교정 실행
@@ -146,7 +194,8 @@ export default function App() {
     // 교정 직후
     logEvent({
       event: 'editor_run_paraphrasing',
-      source_recommend_event_id: recommendId,
+      recommend_session_id: recommendId,
+      source_recommend_event_id: recommendInsertId,
       reco_category: category,
       recommend_phase: 'phase1.5',
       cache_hit: false,
@@ -175,7 +224,8 @@ export default function App() {
     // 사용자 최종 채택 로그
     logEvent({
       event: 'editor_selected_paraphrasing',
-      source_recommend_event_id: recommendId,
+      recommend_session_id: recommendId,
+      source_recommend_event_id: recommendInsertId,
       was_recommended: true,
       was_accepted: true,
       final_category: category,
@@ -259,6 +309,8 @@ export default function App() {
               strength,
               requestText,
               optEnabled,
+              recoOptions,
+              contextHash,
             }}
             docId={docId}
             recommendId={recommendId}
