@@ -37,6 +37,9 @@ services:
       - sentencify-net
     depends_on:
       - api # API가 실행된 후 frontend 실행
+    command: >
+      sh -c "npm install && npm run dev -- --host 0.0.0.0"
+
 
   kafka:
     image: apache/kafka:latest
