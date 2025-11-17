@@ -134,738 +134,225 @@ if __name__ == "__main__":
 FILE: README.md
 ================================================================================
 
-# yeardream_final
-
-📘 Sentencify MVP – 로컬 MSA 개발 환경
-
-Sentencify Phase 1(실시간 추천 + 데이터 수집)을 개발하기 위한 로컬 MSA + DevContainer 기반 환경입니다.
-
-FastAPI API 서버는 VS Code DevContainer 안에서 개발하고,
-Kafka / Mongo / Qdrant / Redis 등 인프라는 Docker Compose로 실행합니다.
-
-🚀 1. 사전 준비
-
-팀원이 이 레포를 처음 가져올 때 필요한 것:
-
-Git
-
-Docker Desktop
-
-VS Code
-
-VS Code 확장
-
-Dev Containers (ms-vscode-remote.remote-containers)
-
-🚀 2. 레포 클론
-git clone https://github.com/<USER_OR_ORG>/sentencify-mvp.git
-cd sentencify-mvp
-
-🚀 3. MSA 인프라 실행 (Docker Compose)
-
-루트 폴더에서 실행:
-
-docker compose -f docker-compose.mini.yml up -d --build
-
-
-이 명령으로 다음 5개 컨테이너가 실행됩니다:
-
-api (FastAPI – DevContainer에서 개발용)
-
-kafka
-
-mongo
-
-qdrant
-
-redis
-
-상태 확인:
-
-docker ps
-
-
-중지:
-
-docker compose -f docker-compose.mini.yml down
-
-🧩 4. FastAPI 개발 (VS Code Dev Container)
-
-FastAPI 코드는 DevContainer 내부에서 실행해야 함
-(로컬 Python 환경을 사용하지 않음)
-
-실행 방법
-
-VSCode에서 sentencify-mvp 폴더를 열기
-
-명령 팔레트 열기
-
-macOS: Cmd + Shift + P
-
-Windows: Ctrl + Shift + P
-
-Dev Containers: Reopen in Container 선택
-
-VS Code가 자동으로 API 컨테이너 환경으로 들어감
-
-🧪 5. FastAPI 서버 실행
-
-DevContainer 안에서 터미널을 열고:
-
-uvicorn app.main:app --host 0.0.0.0 --port 8000
-
-
-브라우저에서 접속:
-
-👉 http://localhost:8000/docs
-
-정상적으로 보이면 다음 값이 응답됩니다:
-
-insert_id
-
-recommend_session_id
-
-더미 reco_options 리스트
-
-➡️ 이것이 Phase 1 Step 1 “API 최소 기능” 성공 기준입니다.
-
-📁 디렉터리 구조
-sentencify-mvp/
-├─ api/
-│   ├─ app/
-│   │   └─ main.py
-│   ├─ requirements.txt
-│   └─ Dockerfile
-├─ .devcontainer/
-│   └─ devcontainer.json
-├─ docker-compose.mini.yml
-└─ README.md
-
-📝 DevContainer 관리 규칙
-
-.devcontainer/devcontainer.json 레포에 포함(커밋) 해야 함
-
-이유: 팀원이 Reopen in Container만 하면 동일한 개발 환경을 자동 복원
-
-일반적으로 .gitignore에 넣지 않음
-
-🎯 Phase 1 진행 상황 요약
-✔ 현재 이 레포로 가능한 것
-
-Step 0: MSA 인프라 구축 완료
-
-Step 1: FastAPI 기본 스켈레톤 동작
-
-개발 환경 자동화(DevContainer) 완성
-
-🔜 다음 해야 할 일
-
-P_rule / P_vec 실제 로직 구현
-
-Kafka Producer/Consumer 코드 추가
-
-FE와 B/C 이벤트 스키마 확정 및 연동
-
-📄 기술 로드맵
-
-긴 Phase 1 로드맵(기술 아키텍처, Step 0~5)은 별도 문서로 분리되었습니다.
-
-👉 docs/phase1-roadmap.md (추가 예정)
-
-================================================================================
-FILE: .gitignore
-================================================================================
-
-__pycache__/
-*.pyc
-.env
-.env.*
-.idea/
-.vscode/
-*.log
-*.db
-*.sqlite
-venv/
-.venv/
-
-
-================================================================================
-FILE: project_dir.txt
-================================================================================
-
-# Project dump from: /Users/ysp/yeardream/sentencify-mvp
-
-
-================================================================================
-FILE: project_dir.py
-================================================================================
-
-import os
-from pathlib import Path
-
-# -------- 설정값 --------
-ROOT_DIR = Path(".").resolve()  # 현재 폴더 기준 루트
-OUTPUT_FILE = Path("project_dir.txt")
-
-# 제외할 디렉토리들
-EXCLUDE_DIRS = {
-    ".git",
-    "__pycache__",
-    ".venv",
-    "venv",
-    ".idea",
-    ".vscode",
-    "node_modules",
-    ".pytest_cache",
-}
-
-# 제외할 확장자들 (이미지, 바이너리 등)
-EXCLUDE_EXTS = {
-    ".png", ".jpg", ".jpeg", ".gif", ".ico",
-    ".pdf", ".zip", ".tar", ".gz",
-    ".db", ".sqlite", ".pyc",
-}
-
-MAX_FILE_CHARS = 20_000   # 파일 하나에서 최대 가져올 문자 수
-MAX_TOTAL_CHARS = 300_000 # 전체 합산 최대 문자 수 (너무 크면 LLM이 못 받음)
-
-# ------------------------
-
-
-def should_skip_dir(path: Path) -> bool:
-    """제외 디렉토리 규칙."""
-    parts = set(path.parts)
-    return any(d in parts for d in EXCLUDE_DIRS)
-
-
-def should_skip_file(path: Path) -> bool:
-    """제외 파일 규칙."""
-    if path.suffix.lower() in EXCLUDE_EXTS:
-        return True
-    return False
-
-
-def is_text_file(path: Path) -> bool:
-    """간단한 방식으로 텍스트/바이너리 구분 (대충이면 충분)."""
-    try:
-        with open(path, "rb") as f:
-            chunk = f.read(1024)
-        # 널바이트가 있으면 대충 바이너리로 간주
-        if b"\x00" in chunk:
-            return False
-        return True
-    except Exception:
-        return False
-
-
-def main():
-    total_chars = 0
-    lines = []
-
-    lines.append(f"# Project dump from: {ROOT_DIR}\n\n")
-
-    for root, dirs, files in os.walk(ROOT_DIR):
-        root_path = Path(root)
-
-        # 제외 디렉토리 필터
-        if should_skip_dir(root_path.relative_to(ROOT_DIR)):
-            dirs[:] = []  # 이 디렉토리 아래는 더 안 내려감
-            continue
-
-        # 하위 탐색 시에도 제외 디렉토리 제거
-        dirs[:] = [d for d in dirs if d not in EXCLUDE_DIRS]
-
-        for filename in files:
-            file_path = root_path / filename
-            rel_path = file_path.relative_to(ROOT_DIR)
-
-            if should_skip_file(file_path):
-                continue
-            if not is_text_file(file_path):
-                continue
-
-            try:
-                text = file_path.read_text(encoding="utf-8", errors="ignore")
-            except Exception:
-                continue
-
-            if not text.strip():
-                continue
-
-            # 파일 당 최대 길이 제한
-            if len(text) > MAX_FILE_CHARS:
-                text = text[:MAX_FILE_CHARS] + "\n\n...[TRUNCATED]...\n"
-
-            block = []
-            block.append("\n" + "=" * 80 + "\n")
-            block.append(f"FILE: {rel_path}\n")
-            block.append("=" * 80 + "\n\n")
-            block.append(text)
-            block.append("\n")
-
-            block_str = "".join(block)
-
-            # 전체 최대 길이 초과하면 중단
-            if total_chars + len(block_str) > MAX_TOTAL_CHARS:
-                lines.append(
-                    "\n\n...[STOPPED: MAX_TOTAL_CHARS reached, remaining files omitted]...\n"
-                )
-                OUTPUT_FILE.write_text("".join(lines), encoding="utf-8")
-                print(f"[+] Written (truncated) to {OUTPUT_FILE}")
-                return
-
-            lines.append(block_str)
-            total_chars += len(block_str)
-
-    OUTPUT_FILE.write_text("".join(lines), encoding="utf-8")
-    print(f"[+] Written to {OUTPUT_FILE} (total_chars={total_chars})")
-
-
-if __name__ == "__main__":
-    main()
-
-
-================================================================================
-FILE: README.md
-================================================================================
-
-# yeardream_final
-
-📘 Sentencify MVP – 로컬 MSA 개발 환경
-
-Sentencify Phase 1(실시간 추천 + 데이터 수집)을 개발하기 위한 로컬 MSA + DevContainer 기반 환경입니다.
-
-FastAPI API 서버는 VS Code DevContainer 안에서 개발하고,
-Kafka / Mongo / Qdrant / Redis 등 인프라는 Docker Compose로 실행합니다.
-
-🚀 1. 사전 준비
-
-팀원이 이 레포를 처음 가져올 때 필요한 것:
-
-Git
-
-Docker Desktop
-
-VS Code
-
-VS Code 확장
-
-Dev Containers (ms-vscode-remote.remote-containers)
-
-🚀 2. 레포 클론
-git clone https://github.com/<USER_OR_ORG>/sentencify-mvp.git
-cd sentencify-mvp
-
-🚀 3. MSA 인프라 실행 (Docker Compose)
-
-루트 폴더에서 실행:
-
-docker compose -f docker-compose.mini.yml up -d --build
-
-
-이 명령으로 다음 5개 컨테이너가 실행됩니다:
-
-api (FastAPI – DevContainer에서 개발용)
-
-kafka
-
-mongo
-
-qdrant
-
-redis
-
-상태 확인:
-
-docker ps
-
-
-중지:
-
-docker compose -f docker-compose.mini.yml down
-
-🧩 4. FastAPI 개발 (VS Code Dev Container)
-
-FastAPI 코드는 DevContainer 내부에서 실행해야 함
-(로컬 Python 환경을 사용하지 않음)
-
-실행 방법
-
-VSCode에서 sentencify-mvp 폴더를 열기
-
-명령 팔레트 열기
-
-macOS: Cmd + Shift + P
-
-Windows: Ctrl + Shift + P
-
-Dev Containers: Reopen in Container 선택
-
-VS Code가 자동으로 API 컨테이너 환경으로 들어감
-
-🧪 5. FastAPI 서버 실행
-
-DevContainer 안에서 터미널을 열고:
-
-uvicorn app.main:app --host 0.0.0.0 --port 8000
-
-
-브라우저에서 접속:
-
-👉 http://localhost:8000/docs
-
-정상적으로 보이면 다음 값이 응답됩니다:
-
-insert_id
-
-recommend_session_id
-
-더미 reco_options 리스트
-
-➡️ 이것이 Phase 1 Step 1 “API 최소 기능” 성공 기준입니다.
-
-📁 디렉터리 구조
-sentencify-mvp/
-├─ api/
-│   ├─ app/
-│   │   └─ main.py
-│   ├─ requirements.txt
-│   └─ Dockerfile
-├─ .devcontainer/
-│   └─ devcontainer.json
-├─ docker-compose.mini.yml
-└─ README.md
-
-📝 DevContainer 관리 규칙
-
-.devcontainer/devcontainer.json 레포에 포함(커밋) 해야 함
-
-이유: 팀원이 Reopen in Container만 하면 동일한 개발 환경을 자동 복원
-
-일반적으로 .gitignore에 넣지 않음
-
-🎯 Phase 1 진행 상황 요약
-✔ 현재 이 레포로 가능한 것
-
-Step 0: MSA 인프라 구축 완료
-
-Step 1: FastAPI 기본 스켈레톤 동작
-
-개발 환경 자동화(DevContainer) 완성
-
-🔜 다음 해야 할 일
-
-P_rule / P_vec 실제 로직 구현
-
-Kafka Producer/Consumer 코드 추가
-
-FE와 B/C 이벤트 스키마 확정 및 연동
-
-📄 기술 로드맵
-
-긴 Phase 1 로드맵(기술 아키텍처, Step 0~5)은 별도 문서로 분리되었습니다.
-
-👉 docs/phase1-roadmap.md (추가 예정)
-
-================================================================================
-FILE: .gitignore
-================================================================================
-
-__pycache__/
-*.pyc
-.env
-.env.*
-.idea/
-.vscode/
-*.log
-*.db
-*.sqlite
-venv/
-.venv/
-
-
-================================================================================
-FILE: docker-compose.mini.yml
-================================================================================
-
-version: "3.9"
-
-services:
-  api:
-    build: ./api
-    ports:
-      - "8000:8000"
-    environment:
-      KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
-      MONGO_URI: "mongodb://mongo:27017"
-      QDRANT_HOST: "qdrant"
-      QDRANT_PORT: "6333"
-      REDIS_HOST: "redis"
-    depends_on:
-      - kafka
-      - mongo
-      - qdrant
-      - redis
-    volumes:
-      - ../:/workspace
-    networks:
-      - sentencify-net
-
-  kafka:
-    image: apache/kafka:latest
-    ports:
-      - "9092:9092"
-      - "9093:9093"
-    environment:
-      KAFKA_ENABLE_KRAFT: "yes"
-      KAFKA_CFG_PROCESS_ROLES: "broker,controller"
-      KAFKA_CFG_NODE_ID: "1"
-      KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: "1@kafka:9094"
-      KAFKA_CFG_LISTENERS: "PLAINTEXT://:9092,PLAINTEXT_HOST://:9093,CONTROLLER://:9094"
-      KAFKA_CFG_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:9093"
-      KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: "PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT,CONTROLLER:PLAINTEXT"
-      KAFKA_CFG_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
-      KAFKA_CFG_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
-    volumes:
-      - kafka-data:/bitnami/kafka
-    networks:
-      - sentencify-net
-
-  mongo:
-    image: mongo:6.0
-    ports:
-      - "27017:27017"
-    volumes:
-      - mongo-data:/data/db
-    networks:
-      - sentencify-net
-
-  qdrant:
-    image: qdrant/qdrant:latest
-    ports:
-      - "6333:6333"
-      - "6334:6334"
-    volumes:
-      - qdrant-data:/qdrant/storage
-    networks:
-      - sentencify-net
-
-  redis:
-    image: redis:7
-    ports:
-      - "6379:6379"
-    networks:
-      - sentencify-net
-
-networks:
-  sentencify-net:
-    driver: bridge
-
-volumes:
-  kafka-data:
-  mongo-data:
-  qdrant-data:
-
-
-================================================================================
-FILE: docs/phase1/phase1-roadmap.md
-================================================================================
-
-이 로드맵은 개발팀 간의 의존성(Dependency)을 최소화하고, "API 개발 → 테스트 데이터 준비 → P_vec 튜닝 → 전체 체인 통합"의 자연스러운 흐름을 따릅니다.
 
 ---
 
-## 🗺️ Sentencify Phase 1: 실행 순서 기반 로드맵 (v1.1)
+# Sentencify MVP – 개발 환경 안내
 
-Phase 1의 목표는 **(1) 실시간 추천 (`P_rule`+`P_vec`)**과 **(2) 데이터 수집 체인 (`A-B-C-D-E`)**을 완성하는 것입니다.
+Sentencify Phase 1(실시간 추천 및 데이터 수집)을 위한 로컬 개발 환경입니다.
+본 프로젝트는 **Backend (FastAPI)**, **Frontend (React/Vite)**, **Infra(Kafka, MongoDB, Qdrant, Redis)** 를 Docker Compose 기반으로 통합 실행합니다.
+모든 개발은 VS Code Dev Containers 또는 로컬 환경 중 선택하여 진행할 수 있습니다.
 
-### 📍 Step 0: 개발 착수 (Foundation)
+---
 
-모든 개발의 전제 조건이며, 병목 현상을 막기 위해 가장 먼저 완료되어야 합니다.
+## 1. 구성 요소 (총 6개 서비스)
 
-1. **인프라 구축 (WBS TODO 12)**
-    - `docker-compose.mini.yml`을 완성하고 실행합니다.
-    - **핵심 서비스 5개:** `FastAPI`, `Kafka`, `MongoDB` (D 저장용), `Qdrant` (E 저장용), `Redis` (LLM 캐시용).
-2. **One-Way Door 결정 (WBS TODO 10, 3)**
-    - **임베딩 모델 확정:** `P_vec` 계산에 사용할 `embedding_v1` 모델(예: `all-MiniLM-L6-v2`)을 최종 선택합니다. (이 결정이 Step 3의 작업을 정의합니다)
-    - **LLM 엔드포인트 확정:** `B` 이벤트 컨슈머가 호출할 `Paraphrasing LLM` (예: OpenAI API) 엔드포인트를 확정합니다.
+`docker-compose.mini.yml` 파일은 다음 6개의 컨테이너 서비스를 동시에 실행합니다.
 
-### 📍 Step 1: 실시간 API 핵심 구현 (API-Side)
+1. `api`
+   FastAPI 기반의 추천 API 서버
+   주소: `http://localhost:8000`
 
-API 서버가 최소 기능으로 동작하고, 모든 후속 작업(컨슈머, FE)의 기준점을 제공합니다.
+2. `frontend`
+   React + Vite 기반 사용자 인터페이스
+   주소: `http://localhost:5173`
 
-1. **API Contract & Logic (TODO 1, 2)**
-    - `POST /recommend` 엔드포인트와 Pydantic 스키마(`Request`/`Response`)를 정의합니다.
-    - `context_full`, `context_hash` 생성 로직을 구현합니다.
-2. **추천 엔진 스텁(Stub) 구현 (TODO 2)**
-    - `P_rule` (규칙 엔진): 하드코딩된 기본값(예: `{"email": 0.5}`)을 반환합니다.
-    - `P_vec` (벡터 검색): Qdrant에 빈 값을 검색하거나 기본값을 반환합니다.
-3. **핵심 ID 생성 및 반환 (TODO 2)**
-    - `insert_id` (UUID)와 `recommend_session_id` (UUID)를 생성하여 `RecommendResponse`에 포함시킵니다.
-4. **A/I/E 이벤트 발행 (TODO 2, 4)**
-    - FE에 `200 OK` 응답을 반환한 직후, **3개 이벤트(A, I, E)를 Kafka로 `produce`*합니다. (Fire-and-Forget)
+3. `kafka`
+   이벤트 스트림(A / B / C / E / I 이벤트) 처리용 메시지 큐
 
-> [Step 1 완료 기준]POST /recommend 호출 시, (1) 가짜 추천 값과 (2) insert_id, session_id가 반환되며, (3) Kafka 토픽에 A, I, E 이벤트가 쌓입니다.
-> 
+4. `mongo`
+   Ground Truth 저장소 (`D.correction_history`)
 
-### 📍 Step 2: FE-BE 계약 확정 (The Contract)
+5. `qdrant`
+   문맥 벡터 저장소 (`E.context_block`)
 
-Step 1이 완료되는 즉시 FE팀과 백엔드팀이 이 계약을 확정하여 병렬 개발을 시작합니다.
+6. `redis`
+   LLM 응답 캐시 저장소 (B 이벤트용)
 
-1. **API 스키마 고정 (TODO 1)**
-    - Step 1에서 만든 `RecommendRequest` / `RecommendResponse` 스키마를 API 명세서(Swagger/Notion)로 확정합니다.
-2. **FE 역할 정의 (명세서 4.3)**
-    - FE는 다음 3가지 역할을 수행하기로 확정합니다.
-        1. `/recommend` 응답에서 `insert_id`와 `recommend_session_id`를 FE 내부 상태에 저장.
-        2. '실행' 시, 저장된 2개 ID를 포함하여 `B (editor_run_paraphrasing)` 이벤트를 Kafka로 발행.
-        3. '선택' 시, 저장된 2개 ID와 `selected_option_index` 등을 포함하여 `C (editor_selected_paraphrasing)` 이벤트를 Kafka로 발행.
+모든 서비스는 `sentencify-net` 네트워크를 통해 서로 서비스 이름(kafka, mongo 등)만으로 통신합니다.
 
-### 📍 Step 3: 테스트 데이터 준비 및 P_vec 고도화
+---
 
-API가 동작하는 동안, `P_vec`의 정확도를 높이기 위한 데이터를 준비하고 로직을 튜닝합니다.
+## 2. 시작하기
 
-1. **Synthetic DB 생성/적재 (WBS TODO 10)**
-    - `Step 0`에서 확정한 `embedding_v1` 모델로 가상 데이터(Synthetic DB)의 임베딩을 생성합니다.
-    - 이 벡터 데이터(임베딩, `embedding_version: "v1.0"`)를 `Qdrant`에 미리 적재합니다. (명세서 2.3)
-2. **`P_vec` 로직 고도화 (WBS TODO 2)**
-    - `Step 1`에서 만든 `P_vec` 스텁(Stub)을 실제 `Qdrant` 검색 로직으로 교체합니다.
-    - `Synthetic DB`를 기반으로 `P_vec` 점수 계산 로직을 튜닝합니다.
+개발을 시작하는 방법은 두 가지입니다.
+가급적 **VS Code Dev Container 방식(워크플로우 A)**을 권장합니다.
 
-### 📍 Step 4: 비동기 컨슈머 구현 (Data Chain)
+### 워크플로우 A. VS Code Dev Container 사용 (권장)
 
-`Step 2`의 계약에 따라 FE와 API가 발행할 이벤트를 처리하는 백엔드 로직을 구현합니다.
+로컬 시스템에 Python 또는 Node를 설치하지 않아도 되고, 팀 전체가 동일한 개발 환경을 보장할 수 있습니다.
 
-1. **`E` 컨슈머 구현 (WBS TODO 4)**
-    - `E (context_block)` 토픽을 구독(subscribe)하여 `Qdrant`에 `upsert`합니다. (PK: `context_hash`)
-2. **`B` 컨슈머 구현 (WBS TODO 3)**
-    - `B (editor_run_paraphrasing)` 토픽을 구독합니다.
-    - `Step 0`에서 확정한 `Paraphrasing LLM`을 호출하고, `Redis`에 응답을 캐시합니다.
-3. **`C` 컨슈머 구현 (WBS TODO 8)**
-    - `C (editor_selected_paraphrasing)` 토픽을 구독합니다.
-    - `C.was_accepted == true`인 경우, `MongoDB`에 `D(correction_history)` 문서를 생성(insert)합니다.
-    - (선택적) 생성된 `D._id`를 `C.correction_history_id` 필드에 넣어 다시 Kafka `C-log` 토픽에 발행하거나 BigQuery에 저장합니다. (명세서 4.3 Rule 3)
+**사전 요구사항**
 
-### 📍 Step 5: E2E 통합 및 Phase 1 완료 (DoD Check)
+1. Docker Desktop (실행 중이어야 함)
+2. VS Code
+3. VS Code 확장: Dev Containers
 
-모든 컴포넌트(FE, API, Consumers)를 통합하고, Phase 1의 공식 완료 조건을 검증합니다.
+**실행 단계**
 
-1. **FE-BE-Consumer 전체 연동**
-    - `Step 2`의 계약대로 FE 개발을 완료하고 전체 시스템을 통합합니다.
-2. **Phase 1 완료 기준 (7개) 검증 (Definition of Done)**
-    - 사용자 시나리오(드래그 → 실행 → 선택)를 1회 수행한 뒤, 아래 7개 항목이 모두 성공하는지 검증합니다.
-    - ✅ **`/recommend` API 300ms 내 응답** (명세서 2.4)
-    - ✅ **`A/I/E` 이벤트가 모두 Kafka에 정상 발행**
-    - ✅ **`E` Consumer가 Qdrant에 context 저장** (WBS TODO 4)
-    - ✅ **`B` Consumer가 LLM 호출 → Redis 저장** (WBS TODO 3)
-    - ✅ **`C` Consumer가 D(correction_history) 생성** (in MongoDB) (WBS TODO 8)
-    - ✅ **`FE`가 `insert_id`/`session_id`를 정상 전달** (B, C 이벤트 Payload 검증)
-    - ✅ **`A→B→C→D→E` 전체 체인이 한 세션에서 끊김 없이 생성됨** (명세서 2.4)
+1. 레포지토리 클론
 
-> [Phase 1 완료]
-위 7개 검증 항목이 모두 통과되면, Phase 1의 공식 목표("실시간 추천 + Hooks 수집")가 달성됩니다.
->
+   ```bash
+   git clone https://github.com/<ORG_OR_USER>/sentencify-mvp.git
+   cd sentencify-mvp
+   ```
+
+2. VS Code로 폴더 열기
+
+   ```bash
+   code .
+   ```
+
+3. 하단 알림에서
+   **"Reopen in Container"** 선택
+   (또는 `Cmd + Shift + P` → `Dev Containers: Reopen in Container`)
+
+4. VS Code가 자동으로 다음을 수행
+
+   * docker compose up 실행
+   * api 컨테이너 내부로 VS Code 연결
+   * api 컨테이너 내부에서 개발 가능해짐
+
+**개발 환경 구동 완료 기준**
+
+* 6개 서비스(api, frontend, kafka, mongo, qdrant, redis)가 실행됨
+* VS Code 터미널은 자동으로 api 컨테이너 내부 쉘을 제공함
+
+---
+
+### 워크플로우 B. 로컬 환경에서 직접 실행 (선택)
+
+VS Code Dev Container를 사용하지 않고 직접 실행하는 방법입니다.
+
+1. Docker Compose 인프라 실행
+
+   ```bash
+   docker compose -f docker-compose.mini.yml up -d --build
+   ```
+
+2. 프론트엔드를 로컬에서 직접 실행하고 싶을 경우
+
+   ```bash
+   cd frontend
+   npm install
+   npm run dev
+   ```
+
+---
+
+## 3. 접속 및 상태 확인
+
+서비스 실행 후 아래 주소에서 정상 작동 여부를 확인할 수 있습니다.
+
+* 프론트엔드
+  `http://localhost:5173`
+
+* 백엔드 FastAPI 문서(Swagger)
+  `http://localhost:8000/docs`
+
+* 실행 중인 컨테이너 확인
+
+  ```bash
+  docker ps
+  ```
+
+* 컨테이너 전체 중지
+
+  ```bash
+  docker compose -f docker-compose.mini.yml down
+  ```
+
+---
+
+## 4. 개발 워크플로우 (Hot Reloading)
+
+`docker-compose.mini.yml`의 볼륨 설정으로 인해, 로컬에서 파일을 수정하면 컨테이너 내부 애플리케이션이 자동으로 재시작됩니다.
+
+* **프론트엔드 (React/Vite)**
+  `frontend/src` 내부 파일 수정 시 브라우저 자동 새로고침
+
+* **백엔드 (FastAPI)**
+  `api/app/main.py` 수정 시 `uvicorn` 자동 재시작
+  (Dev Container 사용 시 VS Code 터미널에서 로그 확인 가능)
+
+---
+
+## 5. 디렉터리 구조
+
+```
+sentencify-mvp/
+├── .devcontainer/
+│   └── devcontainer.json
+├── api/
+│   ├── app/
+│   │   └── main.py
+│   ├── requirements.txt
+│   └── Dockerfile
+├── docs/
+│   └── phase1/
+│       └── phase1-roadmap.md
+├── frontend/
+│   ├── src/
+│   │   ├── utils/
+│   │   ├── App.jsx
+│   │   └── ...
+│   ├── package.json
+│   ├── vite.config.js
+│   └── Dockerfile
+├── docker-compose.mini.yml
+└── .gitignore
+```
+
+---
+
+## 6. Phase 1 진행 상황 요약
+
+### 완료된 항목
+
+* 인프라 구축
+  (FastAPI, FE, Kafka, MongoDB, Qdrant, Redis 통합 실행)
+* FastAPI 최소 스켈레톤 (`POST /recommend`)
+
+### 필요 작업 (진행 예정)
+
+1. **API 고도화**
+
+   * `P_rule`, `P_vec` 추천 로직 구현
+   * Kafka Producer 로직(A/I/E 이벤트) 추가
+
+2. **FE ↔ BE 계약 확정**
+
+   * FE가 `/recommend` API 호출하도록 변경
+   * B/C 이벤트를 통해 실행/선택 로그 발행
+
+3. **Vector DB 준비**
+
+   * Synthetic DB 생성
+   * Qdrant에 임베딩 적재
+
+4. **비동기 컨슈머 구현**
+
+   * B, C, E 이벤트 처리 컨슈머 개발
+
+Phase 1의 공식 완료 기준(DoD)은 phase1-roadmap.md 문서를 참고합니다.
+
+---
 
 ================================================================================
-FILE: .devcontainer/devcontainer.json
+FILE: .gitignore
 ================================================================================
 
-{
-  "name": "sentencify-mvp-dev",
-  "dockerComposeFile": [
-    "../docker-compose.mini.yml"
-  ],
-  "service": "api",
-  "workspaceFolder": "/workspace",
-  
-  "customizations": {
-    "vscode": {
-      "extensions": [
-        "ms-python.python",
-        "ms-toolsai.jupyter",
-        "ms-azuretools.vscode-docker",
-        "batisteo.vscode-django"
-      ]
-    }
-  },
-
-  "postCreateCommand": "pip install --no-cache-dir -r requirements.txt",
-
-  "remoteUser": "root"
-}
-
-
-================================================================================
-FILE: api/requirements.txt
-================================================================================
-
-fastapi
-uvicorn[standard]
-pydantic
-kafka-python
-redis
-qdrant-client
-
-
-================================================================================
-FILE: api/Dockerfile
-================================================================================
-
-FROM python:3.11-slim
-
-WORKDIR /app
-
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-COPY app ./app
-
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
-
-
-================================================================================
-FILE: api/app/main.py
-================================================================================
-
-from fastapi import FastAPI
-from pydantic import BaseModel
-import uuid
-
-class Context(BaseModel):
-    prev: str | None = None
-    next: str | None = None
-
-class RecommendRequest(BaseModel):
-    doc_id: str
-    user_id: str
-    selected_text: str
-    context: Context
-
-class RecommendOption(BaseModel):
-    category: str
-    strength: str | None = None
-
-class RecommendResponse(BaseModel):
-    insert_id: str
-    recommend_session_id: str
-    reco_options: list[RecommendOption]
-
-app = FastAPI()
-
-@app.post("/recommend", response_model=RecommendResponse)
-async def recommend(req: RecommendRequest):
-    insert_id = str(uuid.uuid4())
-    recommend_session_id = str(uuid.uuid4())
-    options = [
-        RecommendOption(category="thesis", strength="moderate"),
-        RecommendOption(category="email", strength="weak"),
-    ]
-
-    return RecommendResponse(
-        insert_id=insert_id,
-        recommend_session_id=recommend_session_id,
-        reco_options=options,
-    )
-
+__pycache__/
+*.pyc
+.env
+.env.*
+.idea/
+.vscode/
+*.log
+*.db
+*.sqlite
+venv/
+.venv/
 
 
 ================================================================================
@@ -895,6 +382,23 @@ services:
     networks:
       - sentencify-net
 
+  frontend:
+    build:
+      context: ./frontend  # frontend 폴더의
+      dockerfile: Dockerfile # Dockerfile을 사용
+    ports:
+      - "5173:5173" # Vite 포트를 로컬 PC와 연결
+    volumes:
+      # [중요] 소스 코드를 마운트하여 "핫 리로딩(Hot Reloading)" 활성화
+      - ./frontend:/app
+      # [중요] /app/node_modules는 마운트에서 제외하여,
+      # 컨테이너 내부의 node_modules를 사용 (성능 및 호환성)
+      - /app/node_modules
+    networks:
+      - sentencify-net
+    depends_on:
+      - api # API가 실행된 후 frontend 실행
+
   kafka:
     image: apache/kafka:latest
     ports:
@@ -911,7 +415,7 @@ services:
       KAFKA_CFG_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
       KAFKA_CFG_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
     volumes:
-      - kafka-data:/bitnami/kafka
+      - kafka-data:/tmp/kafka-logs
     networks:
       - sentencify-net
 
@@ -1014,6 +518,30 @@ utils
 
 
 ================================================================================
+FILE: frontend/Dockerfile
+================================================================================
+
+# 1. 기본 이미지 (Vite/React에 권장되는 Node 20)
+FROM node:20-alpine
+
+# 2. 작업 디렉터리 설정
+WORKDIR /app
+
+# 3. 의존성 설치 (소스코드 복사 전에 실행해야 Docker 캐시 활용)
+COPY package.json package-lock.json ./
+RUN npm install
+
+# 4. 나머지 소스 코드 복사
+COPY . .
+
+# 5. Vite 개발 서버 포트 노출
+EXPOSE 5173
+
+# 6. Vite 개발 서버 실행 (중요: --host 0.0.0.0)
+#    --host 0.0.0.0 플래그는 컨테이너 외부(PC)에서 접속을 허용합니다.
+CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0"]
+
+================================================================================
 FILE: frontend/postcss.config.cjs
 ================================================================================
 
@@ -1030,7 +558,7 @@ module.exports = {
 FILE: frontend/vite.config.js
 ================================================================================
 
-// vite.config.js
+// frontend/vite.config.js
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
@@ -1039,9 +567,27 @@ export default defineConfig({
   css: {
     postcss: './postcss.config.cjs',
   },
-  base: '/sentencifyMVP-teamproject/'
-});
+  // base: '/sentencifyMVP-teamproject/', // GitHub Pages 배포용이므로 주석 처리
 
+  // ✅ [수정됨] Docker 컨테이너에서 실행하기 위한 설정
+  server: {
+    // 1. Docker 컨테이너가 외부 접속을 허용하도록 설정
+    host: '0.0.0.0', 
+    port: 5173, // 포트 고정
+    
+    proxy: {
+      // 2. 프록시 타겟을 localhost가 아닌 'api' (백엔드 서비스 이름)로 변경
+      '/recommend': {
+        target: 'http://api:8000',
+        changeOrigin: true,
+      },
+      '/log': {
+        target: 'http://api:8000',
+        changeOrigin: true,
+      },
+    },
+  },
+});
 
 ================================================================================
 FILE: frontend/README.md
