@@ -41,25 +41,76 @@ services:
       sh -c "npm install && npm run dev -- --host 0.0.0.0"
 
 
+  # kafka:
+  #   image: confluentinc/cp-kafka:7.6.1
+  #   ports:
+  #     - "9092:9092"
+  #     - "9093:9093"
+    # environment:
+    #   KAFKA_ENABLE_KRAFT: "yes"
+    #   KAFKA_CFG_PROCESS_ROLES: "broker,controller"
+    #   KAFKA_CFG_NODE_ID: "1"
+    #   KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: "1@kafka:9094"
+    #   KAFKA_CFG_LISTENERS: "PLAINTEXT://:9092,PLAINTEXT_HOST://:9093,CONTROLLER://:9094"
+    #   KAFKA_CFG_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:9093"
+    #   KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: "PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT,CONTROLLER:PLAINTEXT"
+    #   KAFKA_CFG_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+    #   KAFKA_CFG_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
+    # environment:
+    #   KAFKA_ENABLE_KRAFT: "yes"
+    #   KAFKA_PROCESS_ROLES: "broker,controller"
+    #   KAFKA_NODE_ID: "1"
+    #   KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:9094"
+    #   KAFKA_LISTENERS: "PLAINTEXT://:9092,PLAINTEXT_HOST://:9093,CONTROLLER://:9094"
+    #   KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:9093"
+    #   KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT,CONTROLLER:PLAINTEXT"
+    #   KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+    #   KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
+    # volumes:
+    #   - kafka-data:/tmp/kafka-logs
+    # networks:
+    #   - sentencify-net
+
   kafka:
-    image: apache/kafka:latest
+    image: confluentinc/cp-kafka:7.6.1
+    hostname: kafka
+    container_name: kafka
     ports:
       - "9092:9092"
-      - "9093:9093"
     environment:
-      KAFKA_ENABLE_KRAFT: "yes"
-      KAFKA_CFG_PROCESS_ROLES: "broker,controller"
-      KAFKA_CFG_NODE_ID: "1"
-      KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: "1@kafka:9094"
-      KAFKA_CFG_LISTENERS: "PLAINTEXT://:9092,PLAINTEXT_HOST://:9093,CONTROLLER://:9094"
-      KAFKA_CFG_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:9093"
-      KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: "PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT,CONTROLLER:PLAINTEXT"
-      KAFKA_CFG_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
-      KAFKA_CFG_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
+      # KRaft cluster initialization
+      CLUSTER_ID: "LSftEY_7Q9GpGxd2AICpTw"  # 아무 문자열 가능
+
+      # --- KRaft 설정 ---
+      KAFKA_PROCESS_ROLES: "broker,controller"
+      KAFKA_NODE_ID: "1"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:9093"
+
+      # --- 리스너 설정 ---
+      KAFKA_LISTENERS: "PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:9092"
+
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT"
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
+
+      # --- 개발용 옵션 ---
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+
+      # 로그 디렉토리
+      KAFKA_LOG_DIRS: "/var/lib/kafka/data"
+
     volumes:
-      - kafka-data:/tmp/kafka-logs
+      - kafka-data:/var/lib/kafka/data
     networks:
       - sentencify-net
+
+
+
+
 
   mongo:
     image: mongo:6.0
