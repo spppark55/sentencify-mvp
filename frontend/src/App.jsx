@@ -31,13 +31,15 @@ export default function App() {
     strength: true,
   });
 
+  // 교정 후보 리스트 상태
+  const [candidates, setCandidates] = useState([]);
+
   // Phase 식별자
   const [docId, setDocId] = useState(() => uuidv4());
   const [recommendId, setRecommendId] = useState(null); // recommend_session_id
   const [recommendInsertId, setRecommendInsertId] = useState(null); // A.insert_id
   const [recoOptions, setRecoOptions] = useState([]);
   const [contextHash, setContextHash] = useState(null);
-
 
   // 자동 저장
   useEffect(() => {
@@ -67,6 +69,7 @@ export default function App() {
     setRecommendInsertId(null);
     setRecoOptions([]);
     setContextHash(null);
+    setCandidates([]);
     try {
       localStorage.removeItem(STORAGE_KEY);
     } catch {}
@@ -87,6 +90,7 @@ export default function App() {
     setOptEnabled({ category: true, language: true, strength: true });
     setDocId(uuidv4());
     setRecommendId(null);
+    setCandidates([]);
     alert('로그아웃 (mock): 로컬 데이터가 초기화되었습니다.');
   };
 
@@ -218,66 +222,87 @@ export default function App() {
     };
 
     const started = performance.now();
-    const corrected = await mockCorrect(payload);
+    const list = await mockCorrect(payload);
     const elapsed = Math.round(performance.now() - started);
 
-    // 사용자 최종 채택 로그
+    const safeList = Array.isArray(list) ? list : list ? [list] : [];
+
+    // ✅ 후보 리스트 상태에 저장 → OptionPanel에서 버튼으로 보여줌
+    setCandidates(safeList);
+
+    // 후보가 생성된 것에 대한 별도 로그 남기고 싶으면 여기서
+    logEvent({
+      event: 'editor_paraphrasing_candidates',
+      recommend_session_id: recommendId,
+      source_recommend_event_id: recommendInsertId,
+      candidate_count: list.length,
+      response_time_ms: elapsed,
+      selected_text: selection.text,
+      selection_start: selection.start,
+      selection_end: selection.end,
+      style_request: requestText,
+      category,
+      language,
+      strength,
+    });
+
+  };
+
+  // 후보 클릭 시 본문 반영하는 핸들러
+  const handleApplyCandidate = (candidate, index) => {
+    if (!selection.text) {
+      // 이론상 실행 직후에는 selection이 살아있어야 하지만,
+      // 방어적으로 체크
+      alert('적용할 문장을 찾을 수 없습니다. 다시 문장을 선택하고 실행해 주세요.');
+      return;
+    }
+
+    const before = text.slice(0, selection.start);
+    const after = text.slice(selection.end);
+    const newText = before + candidate + after;
+
+    setText(newText);
+    // ✅ 선택 해제 & 후보 리스트 비우기
+    setSelection({ text: '', start: 0, end: 0 });
+    // ✅ 적용 후 후보 지우기
+    setCandidates([]);
+
+    // ✅ 최종 채택 로그
     logEvent({
       event: 'editor_selected_paraphrasing',
       recommend_session_id: recommendId,
       source_recommend_event_id: recommendInsertId,
       was_recommended: true,
       was_accepted: true,
+      selected_candidate_index: index,
+      selected_candidate_text: candidate,
       final_category: category,
       final_language: language,
       final_strength: strength,
       style_request: requestText,
-      selected_text: selection.text,
+      original_selected_text: selection.text,
       selection_start: selection.start,
       selection_end: selection.end,
       recommend_confidence: 0.87,
       macro_weight: 0.25,
-      response_time_ms: elapsed,
+      response_time_ms: 0,
     });
 
+    // ✅ 히스토리 로그
     logEvent({
       event: 'correction_history',
       history_id: uuidv4(),
       user_id: user?.id,
       doc_id: docId,
       original_text: selection.text,
-      selected_text: corrected,
+      selected_text: candidate,
       recommended_category: category,
       final_category: category,
       context_ref: `ctx_${Date.now()}`,
       created_at: new Date().toISOString(),
     });
+};
 
-    const before = text.slice(0, selection.start);
-    const after = text.slice(selection.end);
-    setText(before + corrected + after);
-    setSelection({ text: '', start: 0, end: 0 });
-  };
-
-  // 서술형 요청 제출
-  const handleSubmitRequest = (e) => {
-    e.preventDefault();
-    logEvent({
-      event: 'style_request_submit',
-      user_id: user?.id,
-      doc_id: docId,
-      payload: {
-        requestText,
-        category: optEnabled.category ? category : undefined,
-        language: optEnabled.language ? language : undefined,
-        strength: optEnabled.strength ? strength : undefined,
-        selection: selection.text,
-        context,
-      },
-    });
-    alert('요청사항이 제출되었습니다. (mock)');
-    setRequestText('');
-  };
 
   return (
     <div className="h-screen flex flex-col">
@@ -285,7 +310,13 @@ export default function App() {
       <Header onLogout={handleLogout} />
 
       {/* 본문 3열 레이아웃: Sidebar | Editor | OptionPanel */}
-      <div className="grid grid-cols-[240px_1fr_320px] gap-0 h-[calc(100vh-4rem)]">
+      <div className="
+              grid 
+              grid-cols-[240px_1fr_320px] 
+              gap-0 
+              h-[calc(100vh-4rem)] 
+            "
+      >
         <aside className="border-r p-4">
           <Sidebar onNew={handleNewDraft} />
         </aside>
@@ -298,7 +329,7 @@ export default function App() {
             onSelectionChange={handleSelectionChange}
           />
 
-          {/* ✅ 디버그 패널 */}
+          {/* 디버그 패널 */}
           <DebugPanel
             text={text}
             selection={selection}
@@ -317,6 +348,7 @@ export default function App() {
           />
         </main>
 
+        {/* 옵션 패널 */}
         <aside className="border-l p-4">
           <h2 className="text-lg font-semibold mb-4">옵션 패널</h2>
           <OptionPanel
@@ -332,7 +364,8 @@ export default function App() {
             optEnabled={optEnabled}
             setOptEnabled={setOptEnabled}
             onRun={handleRunCorrection}
-            onSubmitRequest={handleSubmitRequest}
+            candidates={candidates}
+            onApplyCandidate={handleApplyCandidate}
           />
         </aside>
       </div>
