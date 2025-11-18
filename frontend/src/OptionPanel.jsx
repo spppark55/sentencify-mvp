@@ -11,7 +11,8 @@ export default function OptionPanel({
   optEnabled,
   setOptEnabled,
   onRun,
-  onSubmitRequest,
+  candidates,
+  onApplyCandidate,
 }) {
   const toggleOption = (key) => {
     setOptEnabled({ ...optEnabled, [key]: !optEnabled[key] });
@@ -116,31 +117,48 @@ export default function OptionPanel({
         )}
       </div>
 
+      {/* 서술형 요청 */}
+      <div className="request-form mt-2">
+        <label className="font-medium">서술형 요청사항</label>
+        <textarea
+          className="flex w-full mt-2 border rounded p-2 text-sm"
+          placeholder="예) 더 간결하고 자연스럽게 바꿔줘"
+          value={requestText}
+          onChange={(e) => setRequestText(e.target.value)}
+        />
+      </div>
+
       {/* 실행 버튼 */}
       <button
         onClick={onRun}
         className="h-10 rounded-md bg-purple-600 text-white hover:bg-purple-700"
       >
-        실행 (교정)
+        실행 (교정 후보 생성)
       </button>
 
-      {/* 서술형 요청 */}
-      <form onSubmit={onSubmitRequest} className="request-form mt-2">
-        <label className="font-medium">서술형 요청사항</label>
-        <textarea
-          className="flex w-full mt-2"
-          placeholder="예) 더 간결하고 자연스럽게 바꿔줘"
-          value={requestText}
-          onChange={(e) => setRequestText(e.target.value)}
-        />
-        <button
-          type="submit"
-          className="mt-2 h-10 rounded-md bg-gray-800 text-white hover:bg-gray-900 w-full"
-        >
-          요청 제출
-        </button>
-      </form>
-
+      {/* 후보 리스트 */}
+      {Array.isArray(candidates) && candidates.length > 0 && (
+        <div className="mt-3 border rounded-md p-3 bg-purple-50 text-sm text-gray-800">
+          <div className="font-semibold mb-2 text-gray-700">교정된 문장 후보</div>
+          <ul className="space-y-2 max-h-40 overflow-auto">
+            {candidates.map((c, idx) => (
+              <li key={idx}>
+                <button
+                  type="button"
+                  className="w-full text-left border rounded-md px-2 py-1 bg-white hover:bg-purple-100"
+                  onClick={() => onApplyCandidate(c, idx)}
+                >
+                  {c}
+                </button>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-1 text-xs text-gray-500">
+            원하는 문장을 클릭하면 본문에 반영됩니다.
+          </p>
+        </div>
+      )}
+      
       <div className="mt-auto text-xs text-gray-500 pt-3 border-t">
         히스토리 / 설정
       </div>

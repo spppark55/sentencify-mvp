@@ -9,7 +9,7 @@ export default function DebugPanel({
   const events = window.__eventLog || [];
 
   return (
-    <div className="mt-4 border rounded p-3 text-xs bg-gray-50">
+    <div className="mt-4 border rounded p-3 text-xs bg-gray-50 max-w-full">
       <div className="flex items-center justify-between">
         <strong className="text-gray-700">Debug Panel</strong>
         <div className="flex gap-2">
@@ -68,9 +68,9 @@ export default function DebugPanel({
           <div className="truncate">Next: {context?.next || '-'}</div>
         </div>
 
-        <div className="border rounded p-2 col-span-2">
+        <div className="border rounded p-2 col-span-2 max-w-full">
           <div className="font-semibold text-gray-700 mb-1">옵션</div>
-          <pre className="whitespace-pre-wrap">
+          <pre className="whitespace-pre-wrap break-all text-[11px] leading-relaxed">
             {JSON.stringify(options, null, 2)}
           </pre>
         </div>
@@ -81,7 +81,7 @@ export default function DebugPanel({
         <div className="font-semibold text-gray-700 mb-1">
           이벤트 로그 ({events.length})
         </div>
-        <div className="max-h-64 overflow-auto border rounded">
+        <div className="max-h-64 overflow-y-auto overflow-x-auto border rounded max-w-full">
           <table className="w-full text-left">
             <thead className="sticky top-0 bg-white border-b">
               <tr>
@@ -103,18 +103,26 @@ export default function DebugPanel({
                     <div className="truncate text-gray-600">
                       {e.event === 'editor_recommend_options' &&
                         `reco=${e.reco_category} conf=${e.confidence}`}
+
                       {e.event === 'editor_run_paraphrasing' &&
                         `phase=${e.recommend_phase} cat=${e.reco_category}`}
+
                       {e.event === 'editor_selected_paraphrasing' &&
                         `final=${e.final_category}/${e.final_language} s=${e.final_strength} t=${e.response_time_ms}ms`}
+
                       {e.event === 'correction_history' &&
                         `origLen=${e.original_text?.length} -> selLen=${e.selected_text?.length}`}
+                      
+                      {e.event === 'editor_paraphrasing_candidates' &&
+                        `candidates=${e.candidate_count} time=${e.response_time_ms}ms len=${e.selected_text?.length}`}
+
                       {![
-                        'editor_recommend_options',
-                        'editor_run_paraphrasing',
-                        'editor_selected_paraphrasing',
-                        'correction_history',
-                      ].includes(e.event) && JSON.stringify(e)}
+                          'editor_recommend_options',
+                          'editor_run_paraphrasing',
+                          'editor_selected_paraphrasing',
+                          'correction_history',
+                          'editor_paraphrasing_candidates',
+                        ].includes(e.event) && '기타 이벤트'}
                     </div>
                   </td>
                 </tr>
@@ -129,11 +137,11 @@ export default function DebugPanel({
             </tbody>
           </table>
         </div>
-        <details className="mt-2">
+        <details className="mt-2 max-w-full">
           <summary className="cursor-pointer text-gray-600">
             원본 JSON 보기
           </summary>
-          <pre className="p-2 bg-white border rounded overflow-auto max-h-64">
+          <pre className="p-2 bg-white border rounded overflow-auto max-h-64 max-w-full whitespace-pre break-all text-[11px] leading-relaxed">
             {JSON.stringify(events, null, 2)}
           </pre>
         </details>
