@@ -4,6 +4,8 @@ pydantic
 kafka-python
 redis
 qdrant-client
+google-generativeai
+python-dotenv
 pymongo
 python-jose[cryptography]
 passlib[bcrypt]

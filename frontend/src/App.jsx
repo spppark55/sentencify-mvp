@@ -6,7 +6,6 @@ import Sidebar from './Sidebar.jsx';
 import Editor from './Editor.jsx';
 import OptionPanel from './OptionPanel.jsx';
 import { logEvent } from './utils/logger.js';
-import { mockCorrect } from './utils/mockCorrect.js';
 import DebugPanel from './DebugPanel.jsx';
 import { postRecommend } from './utils/api.js';
 
@@ -402,28 +401,35 @@ export default function App() {
       recommend_phase: 'phase1.5',
       cache_hit: false,
       response_time_ms: 0,
-      llm_name: 'mock-gpt',
+      llm_name: 'gemini-2.5-flash',
       selected_text: selection.text,
       selection_start: selection.start,
       selection_end: selection.end,
     });
 
+    // intensity 매핑
+    const intensityMap = ['weak', 'moderate', 'strong'];
+    const intensityLabel = intensityMap[strength] || 'moderate';
+
     const payload = {
-      user_id: user?.id,
+      source_recommend_event_id: recommendInsertId,
+      recommend_session_id: recommendId,
       doc_id: docId,
+      user_id: user?.id ?? 'anonymous',
+      context_hash: contextHash,
       selected_text: selection.text,
-      context,
-      category: optEnabled.category ? category : undefined,
-      language: optEnabled.language ? language : undefined,
-      strength: optEnabled.strength ? strength : undefined,
-      style_request: requestText,
+      target_category: category !== 'none' ? category : '이메일',
+      target_language: language || 'ko',
+      target_intensity: intensityLabel,
     };
 
     const started = performance.now();
-    const list = await mockCorrect(payload);
-    const elapsed = Math.round(performance.now() - started);
+    try {
+      const result = await postParaphrase(payload);
+      const list = result.candidates;
+      const elapsed = Math.round(performance.now() - started);
 
-    const safeList = Array.isArray(list) ? list : list ? [list] : [];
+      const safeList = Array.isArray(list) ? list : list ? [list] : [];
 
     // 후보 리스트 상태에 저장 → OptionPanel에서 버튼으로 보여줌
     setCandidates(safeList);
