@@ -543,6 +543,68 @@
   - `App.jsx`에서 Sidebar 사용 시:
     - `selectedDocId={docId}`를 넘겨 현재 열려 있는 문서와 목록의 선택 상태를 동기화.
 
+---
+
+## 2025-11-18 – Infra: Refactored init scripts & Added Auto-init entrypoint
+
+### 1. Qdrant 초기화 스크립트 구조 개편
+- 파일 이동:
+  - `api/init_qdrant.py` → `scripts/init_qdrant.py`
+- 변경 사항:
+  - 컨테이너 경로 기준으로 앱 모듈을 import할 수 있도록 상단에
+    ```python
+    import os
+    import sys
+
+    sys.path.append("/app")
+    ```
+    추가.
+  - CSV 경로를 명시적으로 `/app/train_data.csv`로 고정:
+    - `csv_path = "/app/train_data.csv"`
+    - Dockerfile에서 해당 위치로 CSV를 복사하도록 맞춤.
+
+### 2. API Dockerfile에서 스크립트/데이터 복사 및 EntryPoint 구성
+- 파일: `api/Dockerfile`
+- 변경 사항:
+  - 빌드 컨텍스트를 루트(`.`)로 사용하기 위해 경로 조정:
+    - `COPY api/requirements.txt .`
+    - `COPY api/app ./app`
+  - init 스크립트/데이터 파일 복사:
+    - `COPY scripts /app/scripts`
+    - `COPY api/train_data.csv /app/train_data.csv`
+  - 엔트리포인트 스크립트 실행을 위한 설정:
+    - `RUN chmod +x /app/scripts/entrypoint.sh`
+    - `ENTRYPOINT ["/bin/bash", "/app/scripts/entrypoint.sh"]`
+
+### 3. EntryPoint 스크립트 추가
+- 파일: `scripts/entrypoint.sh`
+- 내용 요약:
+  ```bash
+  #!/bin/bash
+  set -e
+
+  echo "Starting initialization..."
+  python /app/scripts/init_qdrant.py || echo "Init skipped or failed"
+
+  echo "Starting Server..."
+  exec uvicorn app.main:app --host 0.0.0.0 --port 8000
+  ```
+- 효과:
+  - 컨테이너가 시작될 때마다 Qdrant 컬렉션 및 초기 데이터가 자동으로 준비되며,
+    초기화에 실패해도 API 서버는 정상적으로 뜨도록 구성.
+
+### 4. docker-compose에서 API 빌드 설정 변경
+- 파일: `docker-compose.mini.yml`
+- 변경 사항:
+  - `api` 서비스의 `build` 설정을 다음과 같이 수정:
+    ```yaml
+    api:
+      build:
+        context: .
+        dockerfile: api/Dockerfile
+    ```
+  - 이렇게 함으로써 루트 컨텍스트 기준으로 `api/`와 `scripts/`를 모두 Docker 빌드에 포함시킬 수 있게 됨.
+
 
 ---
 

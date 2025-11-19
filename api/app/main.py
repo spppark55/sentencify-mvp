@@ -115,13 +115,24 @@ def _now_iso() -> str:
 
 
 def build_context_full(prev: Optional[str], selected: str, next_: Optional[str]) -> str:
-    parts = []
+    """
+    Emphasize selected_text first, then lightly attach surrounding context.
+
+    Format:
+      "<selected>\\n[Context] <prev> <next>"
+    """
+    selected = selected or ""
+    context_parts = []
     if prev:
-        parts.append(prev)
-    parts.append(selected)
+        context_parts.append(prev)
     if next_:
-        parts.append(next_)
-    return "\n".join(parts)
+        context_parts.append(next_)
+
+    if context_parts:
+        context_str = " ".join(context_parts)
+        return f"{selected}\n[Context] {context_str}"
+
+    return selected
 
 
 def build_context_hash(doc_id: str, context_full: str) -> str:
@@ -209,14 +220,21 @@ async def recommend(req: RecommendRequest) -> RecommendResponse:
     context_hash = build_context_hash(req.doc_id, context_full)
 
     p_rule: Dict[str, float] = {"thesis": 0.5, "email": 0.3, "article": 0.2}
-    
+
+    print(f"\n[DEBUG] 1. Input Context (Full):\n{context_full!r}", flush=True)
+
     try:
         embedding = get_embedding(context_full)
-        p_vec = compute_p_vec(embedding, limit = 15)
-
-    except Exception as e :
-        print(f"P_vec calculation failed: {e}")
-        p_vec: Dict[str, float] = {"thesis": 0.7, "email": 0.2, "article": 0.1} 
+        print(
+            f"[DEBUG] 2. Embedding Generated: len={len(embedding)}, "
+            f"sample={embedding[:5]}...",
+            flush=True,
+        )
+        p_vec = compute_p_vec(embedding, limit=15)
+        print(f"[DEBUG] 4. Final P_vec Result: {p_vec}\n", flush=True)
+    except Exception as e:
+        print(f"[ERROR] P_vec calculation failed: {e}", flush=True)
+        p_vec = {"thesis": 0.7, "email": 0.2, "article": 0.1}
         
     final_scores: Dict[str, float] = {}
     for k in set(p_rule) | set(p_vec):
