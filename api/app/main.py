@@ -2,14 +2,47 @@ import hashlib
 import json
 import os
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import FastAPI
+from dotenv import load_dotenv
+import google.generativeai as genai
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from kafka import KafkaProducer
 from pydantic import BaseModel
+
+from app.prompts import build_paraphrase_prompt
+
+load_dotenv()
+
+
+class CorrectRequest(BaseModel):
+    selected_text: str
+    field: Optional[str] = None
+    intensity: Optional[str] = None
+    language: Optional[str] = None
+
+
+class ParaphraseRequest(BaseModel):
+    """B 이벤트: editor_run_paraphrasing 요청"""
+    source_recommend_event_id: str
+    recommend_session_id: str
+    doc_id: str
+    user_id: str
+    context_hash: str
+    selected_text: str
+    target_category: str
+    target_language: Optional[str] = "ko"
+    target_intensity: Optional[str] = "moderate"
+
+
+class ParaphraseResponse(BaseModel):
+    """B 이벤트 응답: 교정된 문장 후보들"""
+    candidates: List[str]
+    event_id: str
+    recommend_session_id: str
 
 
 class RecommendRequest(BaseModel):
@@ -56,6 +89,15 @@ app.add_middleware(
 LOG_DIR = Path("logs")
 KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
 KAFKA_ENABLED = os.getenv("KAFKA_ENABLED", "true").lower() != "false"
+
+# --- Gemini API Key 설정 ---
+# 아래 주석을 해제하고 실제 API 키를 설정하거나,
+# `GEMINI_API_KEY` 환경변수를 설정해주세요.
+# os.environ['GEMINI_API_KEY'] = "YOUR_API_KEY"
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
+
 
 _kafka_producer: KafkaProducer | None = None
 
@@ -131,6 +173,120 @@ def produce_e_event(payload: Dict) -> None:
             producer.send("context_block", value=payload)
         except Exception:
             pass
+
+
+def produce_b_event(payload: Dict) -> None:
+    """B 이벤트: editor_run_paraphrasing 발행"""
+    append_jsonl("b.jsonl", payload)
+    producer = get_kafka_producer()
+    if producer is not None:
+        try:
+            producer.send("editor_run_paraphrasing", value=payload)
+        except Exception:
+            pass
+
+@app.post("/paraphrase", response_model=ParaphraseResponse)
+async def paraphrase(req: ParaphraseRequest) -> ParaphraseResponse:
+    """
+    B 이벤트: editor_run_paraphrasing 처리
+    추천(A) 이후 사용자가 실행 버튼을 눌렀을 때 호출되는 엔드포인트
+    """
+    if not GEMINI_API_KEY:
+        raise HTTPException(
+            status_code=500,
+            detail="GEMINI_API_KEY is not configured on the server.",
+        )
+
+    event_id = str(uuid.uuid4())
+
+    # B 이벤트 생성 및 발행
+    b_event = {
+        "event": "editor_run_paraphrasing",
+        "event_id": event_id,
+        "source_recommend_event_id": req.source_recommend_event_id,
+        "recommend_session_id": req.recommend_session_id,
+        "doc_id": req.doc_id,
+        "user_id": req.user_id,
+        "context_hash": req.context_hash,
+        "target_category": req.target_category,
+        "target_language": req.target_language,
+        "target_intensity": req.target_intensity,
+        "executed_at": _now_iso(),
+        "created_at": _now_iso(),
+        "paraphrase_llm_version": "gemini-2.5-flash",
+    }
+    produce_b_event(b_event)
+
+    # Gemini API 호출로 교정 문장 생성
+    try:
+        model = genai.GenerativeModel('gemini-2.5-flash')
+        prompt = build_paraphrase_prompt(
+            selected_text=req.selected_text,
+            category=req.target_category,
+            intensity=req.target_intensity,
+            language=req.target_language,
+        )
+
+        response = await model.generate_content_async(prompt)
+        raw_text = response.text.strip()
+
+        # 응답 파싱: 줄바꿈으로 분리
+        candidates = [c.strip() for c in raw_text.split('\n') if c.strip()]
+
+        # 빈 결과 처리
+        if not candidates:
+            candidates = [req.selected_text]  # Fallback: 원문 반환
+
+        # 최대 3개로 제한
+        candidates = candidates[:3]
+
+        return ParaphraseResponse(
+            candidates=candidates,
+            event_id=event_id,
+            recommend_session_id=req.recommend_session_id,
+        )
+
+    except Exception as e:
+        print(f"Error calling Gemini API: {e}")
+        # 에러 시 원문을 후보로 반환
+        return ParaphraseResponse(
+            candidates=[req.selected_text],
+            event_id=event_id,
+            recommend_session_id=req.recommend_session_id,
+        )
+
+
+# 문장교정 프롬프트 (레거시 호환성을 위해 유지)
+@app.post("/correct", response_model=List[str])
+async def correct(req: CorrectRequest) -> List[str]:
+    """
+    레거시 엔드포인트 - 간단한 교정용
+    프로젝트 아키텍처상으로는 /paraphrase 사용 권장
+    """
+    if not GEMINI_API_KEY:
+        raise HTTPException(
+            status_code=500,
+            detail="GEMINI_API_KEY is not configured on the server.",
+        )
+
+    model = genai.GenerativeModel('gemini-2.5-flash')
+
+    # 새로운 프롬프트 함수 사용
+    prompt = build_paraphrase_prompt(
+        selected_text=req.selected_text,
+        category=req.field or "email",
+        intensity=req.intensity or "moderate",
+        language=req.language or "ko",
+    )
+
+    try:
+        response = await model.generate_content_async(prompt)
+        candidates = response.text.strip().split('\n')
+        # 빈 문자열 제거
+        return [c.strip() for c in candidates if c.strip()]
+    except Exception as e:
+        print(f"Error calling Gemini API: {e}")
+        raise HTTPException(status_code=500, detail="Failed to call Gemini API.")
 
 
 @app.post("/recommend", response_model=RecommendResponse)

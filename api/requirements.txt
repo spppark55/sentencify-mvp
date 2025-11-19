@@ -4,3 +4,5 @@ pydantic
 kafka-python
 redis
 qdrant-client
+google-generativeai
+python-dotenv
