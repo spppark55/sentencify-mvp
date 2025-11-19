@@ -10,14 +10,18 @@ import { mockCorrect } from './utils/mockCorrect.js';
 import DebugPanel from './DebugPanel.jsx';
 import { postRecommend } from './utils/api.js';
 
+// ✅ 추가: AuthContext & Login 불러오기
+import { useAuth } from './auth/AuthContext.jsx';
+import Login from './auth/Login.jsx';
+
 const STORAGE_KEY = 'editor:docs:v1'; // 🔹 여러 문서를 한 번에 저장하는 키
 
 export default function App() {
-  // 임시 사용자 (로그인 붙기 전)
-  const user = { id: 'mock_user_001', email: 'mock@example.com' };
+  // ✅ 임시 유저 제거하고, AuthContext에서 user / logout 사용
+  const { user, logout } = useAuth();
 
   // 🔹 문서 리스트 & 현재 문서 id
-  const [docs, setDocs] = useState([]);           // [{ id, title, text, updatedAt }, ...]
+  const [docs, setDocs] = useState([]); // [{ id, title, text, updatedAt }, ...]
   const [currentId, setCurrentId] = useState(null);
 
   // 본문/선택/컨텍스트
@@ -256,8 +260,14 @@ export default function App() {
     } catch {}
   };
 
-  // 로그아웃(헤더에서 호출) — 현재는 로컬 상태/스토리지 초기화
+  // ✅ 로그아웃(헤더에서 호출)
+  //    - auth.logout() 호출 → user=null → App이 Login 화면으로 전환
+  //    - 에디터 관련 로컬 상태 & localStorage도 초기화
   const handleLogout = () => {
+    // 인증 정보 초기화 (AuthContext)
+    logout();
+
+    // 에디터 상태 초기화
     try {
       localStorage.removeItem(STORAGE_KEY);
     } catch {}
@@ -273,8 +283,13 @@ export default function App() {
     setRequestText('');
     setOptEnabled({ category: true, language: true, strength: true });
     setRecommendId(null);
+    setRecommendInsertId(null);
+    setRecoOptions([]);
+    setContextHash(null);
     setCandidates([]);
-    alert('로그아웃 (mock): 로컬 데이터가 초기화되었습니다.');
+
+    // 필요하면 alert 유지하거나 제거
+    // alert('로그아웃되었습니다.');
   };
 
   // 문맥(prev/next) 계산
@@ -320,7 +335,7 @@ export default function App() {
 
     const payload = {
       doc_id: docId,
-      user_id: user?.id ?? 'anonymous',
+      user_id: user?.id ?? 'anonymous', // ✅ AuthContext에서 받은 user
       selected_text: sel.text,
       context_prev: ctx.prev || null,
       context_next: ctx.next || null,
@@ -481,6 +496,17 @@ export default function App() {
     });
   };
 
+  // ✅ 여기서 "로그인 여부"에 따라 다른 화면 렌더링
+  if (!user) {
+    // 로그인 안 된 상태 → 로그인 페이지부터 시작
+    return (
+      <div className="h-screen flex">
+        <Login />
+      </div>
+    );
+  }
+
+  // ✅ user가 있을 때만 원래 에디터 3열 레이아웃 보여주기
   return (
     <div className="h-screen flex flex-col">
       {/* 상단 헤더 */}
@@ -508,7 +534,11 @@ export default function App() {
 
         <main className="p-4">
           <h1 className="text-xl font-semibold mb-3">에디터</h1>
-          <Editor text={text} setText={setText} onSelectionChange={handleSelectionChange} />
+          <Editor
+            text={text}
+            setText={setText}
+            onSelectionChange={handleSelectionChange}
+          />
 
           {/* 디버그 패널 */}
           <DebugPanel
