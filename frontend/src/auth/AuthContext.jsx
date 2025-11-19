@@ -1,59 +1,107 @@
+// ./src/auth/AuthContext.jsx
 import { createContext, useContext, useEffect, useState } from 'react';
-import { api } from '../utils/api.js';
 
 const AuthCtx = createContext(null);
-const USER_KEY = 'auth:user:v1';
-const TOKEN_KEY = 'auth:token:v1';
+const KEY = 'auth:user:v1';
+
+// 백엔드 연결
+const AUTH_BASE = 'http://localhost:8000';
 
 export function AuthProvider({ children }) {
-  const [user, setUser] = useState(null); // { id, email }
+  const [user, setUser] = useState(null); // { id, email, name }
 
+  // 앱 시작 시 localStorage에서 유저 복원
   useEffect(() => {
     try {
-      const rawUser = localStorage.getItem(USER_KEY);
-      const token = localStorage.getItem(TOKEN_KEY);
-      if (rawUser) {
-        const parsed = JSON.parse(rawUser);
-        setUser(parsed);
-        if (token) {
-          api.defaults.headers.common.Authorization = `Bearer ${token}`;
-        }
-      }
-    } catch {}
+      const raw = localStorage.getItem(KEY);
+      if (raw) setUser(JSON.parse(raw));
+    } catch (e) {
+      console.error('auth load error', e);
+    }
   }, []);
 
+  // ✅ 로그인: /auth/login
   const login = async ({ email, password }) => {
     if (!email || !password) throw new Error('이메일/비밀번호를 입력하세요');
 
-    const res = await api.post('/auth/login', { email, password });
-    const { access_token } = res.data || {};
-    if (!access_token) throw new Error('로그인 응답에 access_token이 없습니다.');
+    const res = await fetch(`${AUTH_BASE}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ 'e-mail': email, password }),
+      credentials: 'include',
+    });
 
-    const nextUser = { email };
-    setUser(nextUser);
+    if (!res.ok) {
+      let msg = '로그인에 실패했습니다';
+      try {
+        const errBody = await res.json();
+        if (errBody?.message) msg = errBody.message;
+      } catch {
+        // 에러 응답이 JSON이 아니면 기본 메시지 사용
+      }
+      throw new Error(msg);
+    }
+
+    // ⚠️ 아직 백엔드 응답 형식이 정확히 안 나왔으니까,
+    // 일단은 status 200만 확인하고 프론트에서 user 객체 구성
+    let data = null;
     try {
-      localStorage.setItem(USER_KEY, JSON.stringify(nextUser));
-      localStorage.setItem(TOKEN_KEY, access_token);
-    } catch {}
+      data = await res.json(); // 나중에 필요하면 사용
+    } catch {
+      // body가 없을 수도 있으니 실패해도 무시
+    }
 
-    api.defaults.headers.common.Authorization = `Bearer ${access_token}`;
+    const userData = {
+      // 백엔드가 id를 내려주면 우선 사용, 아니면 임시 id
+      id: data?.id ?? crypto.randomUUID(),
+      email, // 우리가 보낸 이메일 그대로 사용
+      name: email.split('@')[0],
+    };
+
+    setUser(userData);
+    localStorage.setItem(KEY, JSON.stringify(userData));
   };
 
+  // ✅ 회원가입: /auth/signup
   const signup = async ({ email, password }) => {
     if (!email || !password) throw new Error('이메일/비밀번호를 입력하세요');
 
-    await api.post('/auth/signup', { email, password });
-    // 회원가입 후 바로 로그인
-    await login({ email, password });
+    const res = await fetch(`${AUTH_BASE}/auth/signup`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ 'e-mail': email, password }),
+      credentials: 'include',
+    });
+
+    if (!res.ok) {
+      let msg = '회원가입에 실패했습니다';
+      try {
+        const errBody = await res.json();
+        if (errBody?.message) msg = errBody.message;
+      } catch {}
+      throw new Error(msg);
+    }
+
+    let data = null;
+    try {
+      data = await res.json();
+    } catch {}
+
+    const userData = {
+      id: data?.id ?? crypto.randomUUID(),
+      email,
+      name: email.split('@')[0],
+    };
+
+    setUser(userData);
+    localStorage.setItem(KEY, JSON.stringify(userData));
   };
 
   const logout = () => {
     setUser(null);
-    try {
-      localStorage.removeItem(USER_KEY);
-      localStorage.removeItem(TOKEN_KEY);
-    } catch {}
-    delete api.defaults.headers.common.Authorization;
+    localStorage.removeItem(KEY);
+    // 필요하면 백엔드 logout API도 호출 가능
+    // fetch(`${AUTH_BASE}/logout`, { method: 'POST', credentials: 'include' }).catch(() => {});
   };
 
   return (

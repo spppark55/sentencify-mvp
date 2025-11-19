@@ -1,3 +1,5 @@
+import { useState } from "react";
+
 export default function OptionPanel({
   selectedText,
   category,
@@ -14,9 +16,45 @@ export default function OptionPanel({
   candidates,
   onApplyCandidate,
 }) {
-  const toggleOption = (key) => {
-    setOptEnabled({ ...optEnabled, [key]: !optEnabled[key] });
+  const [showStrengthInfo, setShowStrengthInfo] = useState(false);     // ? 아이콘에 마우스 올렸을 때
+  const [showStrengthTooltip, setShowStrengthTooltip] = useState(false); // 슬라이더 위 작은 말풍선
+
+  const strengthLabelMap = {
+    0: '1단계 : 맞춤법 교정',
+    1: '2단계 : 문장 구조 개선',
+    2: '3단계 : 표현 방식 변경',
   };
+
+  const toggleOption = (key) => {
+    setOptEnabled((prev) => ({
+      ...prev,
+      [key]: !prev[key],
+    }));
+  };
+
+  const renderOnOffLabel = (isOn) => (
+    <div className="flex items-center gap-1 text-xs">
+      <span
+        className={
+          isOn
+            ? 'font-semibold text-purple-600'
+            : 'text-gray-400'
+        }
+      >
+        ON
+      </span>
+      <span className="text-gray-300">/</span>
+      <span
+        className={
+          !isOn
+            ? 'font-semibold text-purple-600'
+            : 'text-gray-400'
+        }
+      >
+        OFF
+      </span>
+    </div>
+  );
 
   return (
     <aside className="h-full flex flex-col gap-4">
@@ -38,75 +76,118 @@ export default function OptionPanel({
       <div className="option-group">
         <div className="flex items-center justify-between">
           <label className="font-medium">카테고리</label>
-          <label className="flex items-center gap-2 text-sm">
-            <span>ON/OFF</span>
+          <div className="flex items-center gap-2">
+            {renderOnOffLabel(optEnabled.category)}
             <input
               type="checkbox"
               checked={optEnabled.category}
               onChange={() => toggleOption('category')}
             />
-          </label>
+          </div>
+
         </div>
-        {optEnabled.category && (
-          <select
-            className="mt-2 border rounded p-2 w-full"
-            value={category}
-            onChange={(e) => setCategory(e.target.value)}
-          >
-            <option value="none">없음</option>
-            <option value="email">이메일</option>
-            <option value="thesis">논문</option>
-            <option value="report">보고서</option>
-            <option value="article">기사</option>
-            <option value="marketing">마케팅</option>
-            <option value="customer">고객상담</option>
-          </select>
-        )}
+
+        {/* ✅ ON/OFF와 상관없이 항상 select 표시 */}
+        <select
+          className={`mt-2 border rounded p-2 w-full ${
+            !optEnabled.category ? 'opacity-60' : ''
+          }`}
+          value={category}
+          onChange={(e) => setCategory(e.target.value)}
+        >
+          <option value="none">없음</option>
+          <option value="email">이메일</option>
+          <option value="thesis">논문</option>
+          <option value="report">보고서</option>
+          <option value="article">기사</option>
+          <option value="marketing">마케팅</option>
+          <option value="customer">고객상담</option>
+        </select>
+
       </div>
 
       {/* 언어 */}
       <div className="option-group">
         <div className="flex items-center justify-between">
           <label className="font-medium">언어</label>
-          <label className="flex items-center gap-2 text-sm">
-            <span>ON/OFF</span>
+          <div className="flex items-center gap-2">
+            {renderOnOffLabel(optEnabled.language)}
             <input
               type="checkbox"
               checked={optEnabled.language}
               onChange={() => toggleOption('language')}
             />
-          </label>
+          </div>
+
         </div>
-        {optEnabled.language && (
-          <select
-            className="mt-2 border rounded p-2 w-full"
-            value={language}
-            onChange={(e) => setLanguage(e.target.value)}
-          >
-            <option value="ko">한국어</option>
-            <option value="en">영어</option>
-            <option value="ja">일본어</option>
-            <option value="zh">중국어</option>
-          </select>
-        )}
+
+        {/* ✅ ON/OFF와 상관없이 항상 select 표시 */}
+        <select
+          className={`mt-2 border rounded p-2 w-full ${
+            !optEnabled.language ? 'opacity-60' : ''
+          }`}
+          value={language}
+          onChange={(e) => setLanguage(e.target.value)}
+        >
+          <option value="ko">한국어</option>
+          <option value="en">영어</option>
+          <option value="ja">일본어</option>
+          <option value="zh">중국어</option>
+        </select>
+
       </div>
 
       {/* 교정 강도 */}
       <div className="option-group">
         <div className="flex items-center justify-between">
-          <label className="font-medium">교정 강도</label>
-          <label className="flex items-center gap-2 text-sm">
-            <span>ON/OFF</span>
+
+          {/* ⬅️ 왼쪽 그룹 : ? 아이콘 + 라벨 */}
+          <div className="flex items-center gap-2 relative">
+            {/* ? 아이콘 */}
+            <button
+              type="button"
+              className="w-5 h-5 flex items-center justify-center rounded-full border border-gray-400 text-xs text-gray-500 bg-white"
+              onMouseEnter={() => setShowStrengthInfo(true)}
+              onMouseLeave={() => setShowStrengthInfo(false)}
+            >
+              ?
+            </button>
+
+            <label className="font-medium">교정 강도</label>
+
+            {/* ? 아이콘 큰 말풍선 */}
+            {showStrengthInfo && (
+              <div className="absolute left-0 top-6 w-60 bg-gray-800 text-white text-xs rounded-md shadow-lg p-2 z-20">
+                <div className="font-semibold mb-1">문장 교정 강도</div>
+                <p>1단계 : 맞춤법 교정</p>
+                <p>2단계 : 문장 구조 개선</p>
+                <p>3단계 : 표현 방식 변경</p>
+                <div className="w-3 h-3 bg-gray-800 rotate-45 absolute left-4 -top-1" />
+              </div>
+            )}
+          </div>
+
+          {/* ➡️ 오른쪽 그룹 : ON/OFF + 체크박스 */}
+          <div className="flex items-center gap-2">
+            {renderOnOffLabel(optEnabled.strength)}
             <input
               type="checkbox"
               checked={optEnabled.strength}
               onChange={() => toggleOption('strength')}
+              className="w-4 h-4"
             />
-          </label>
+          </div>
+
         </div>
-        {optEnabled.strength && (
+
+        {/* 슬라이더는 아래 그대로 유지 */}
+        <div
+          className="relative mt-2"
+          onMouseEnter={() => setShowStrengthTooltip(true)}
+          onMouseLeave={() => setShowStrengthTooltip(false)}
+        >
           <input
-            className="mt-2 w-full"
+            className={`w-full ${!optEnabled.strength ? 'opacity-60' : ''}`}
             type="range"
             min="0"
             max="2"
@@ -114,7 +195,14 @@ export default function OptionPanel({
             value={strength}
             onChange={(e) => setStrength(parseInt(e.target.value))}
           />
-        )}
+
+          {showStrengthTooltip && (
+            <div className="absolute -top-9 left-1/2 -translate-x-1/2 bg-gray-800 text-white text-xs px-2 py-1 rounded shadow z-10">
+              {strengthLabelMap[strength]}
+              <div className="w-2 h-2 bg-gray-800 rotate-45 absolute left-1/2 -translate-x-1/2 top-full -mt-1" />
+            </div>
+          )}
+        </div>
       </div>
 
       {/* 서술형 요청 */}

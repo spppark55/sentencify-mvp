@@ -1,3 +1,4 @@
+// App.jsx
 import { useEffect, useState } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import Header from './Header.jsx';
@@ -7,13 +8,21 @@ import OptionPanel from './OptionPanel.jsx';
 import { logEvent } from './utils/logger.js';
 import { mockCorrect } from './utils/mockCorrect.js';
 import DebugPanel from './DebugPanel.jsx';
-import api, { postRecommend } from './utils/api.js';
+import { postRecommend } from './utils/api.js';
 
-const STORAGE_KEY = 'editor:draft:v1';
+// ✅ 추가: AuthContext & Login 불러오기
+import { useAuth } from './auth/AuthContext.jsx';
+import Login from './auth/Login.jsx';
+
+const STORAGE_KEY = 'editor:docs:v1'; // 🔹 여러 문서를 한 번에 저장하는 키
 
 export default function App() {
-  // 임시 사용자 (로그인 붙기 전)
-  const user = { id: 'mock_user_001', email: 'mock@example.com' };
+  // ✅ 임시 유저 제거하고, AuthContext에서 user / logout 사용
+  const { user, logout } = useAuth();
+
+  // 🔹 문서 리스트 & 현재 문서 id
+  const [docs, setDocs] = useState([]); // [{ id, title, text, updatedAt }, ...]
+  const [currentId, setCurrentId] = useState(null);
 
   // 본문/선택/컨텍스트
   const [text, setText] = useState('');
@@ -34,113 +43,237 @@ export default function App() {
   // 교정 후보 리스트 상태
   const [candidates, setCandidates] = useState([]);
 
-  // Phase 식별자
-  const [docId, setDocId] = useState(() => uuidv4());
+  // Phase 식별자 (문서 id와 동일하게 가져가자)
+  const [docId, setDocId] = useState(null);
   const [recommendId, setRecommendId] = useState(null); // recommend_session_id
   const [recommendInsertId, setRecommendInsertId] = useState(null); // A.insert_id
   const [recoOptions, setRecoOptions] = useState([]);
   const [contextHash, setContextHash] = useState(null);
-  const [lastSnapshotTime, setLastSnapshotTime] = useState(null);
-  const [refreshTrigger, setRefreshTrigger] = useState(0);
-  const [isSaving, setIsSaving] = useState(false);
-  const [lastSnapshotText, setLastSnapshotText] = useState('');
 
-  // 자동 저장
-  useEffect(() => {
-    setIsSaving(true);
-    const t = setTimeout(() => {
-      try {
-        localStorage.setItem(STORAGE_KEY, text);
-        const now = Date.now();
-        setLastSnapshotTime(now);
-        setRefreshTrigger((v) => v + 1);
-      } catch {
-        // ignore
-      } finally {
-        setIsSaving(false);
-      }
-    }, 400);
-    return () => clearTimeout(t);
-  }, [text]);
+  // 🔹 제목 만들어주는 헬퍼 (처음 20자)
+  const makeTitle = (t) => {
+    const trimmed = (t || '').trim();
+    if (!trimmed) return '새 문서';
+    if (trimmed.length <= 20) return trimmed;
+    return trimmed.slice(0, 20) + '…';
+  };
 
-  // 초기 복원
+  // 🔹 초기 로드: localStorage에서 문서 리스트 읽기
   useEffect(() => {
     try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) setText(saved);
-    } catch {}
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        const loadedDocs = parsed.docs || [];
+        let loadedCurrentId = parsed.currentId;
+
+        if (!loadedCurrentId && loadedDocs.length > 0) {
+          loadedCurrentId = loadedDocs[0].id;
+        }
+
+        // 문서가 하나도 없다면 기본 문서 생성
+        if (loadedDocs.length === 0) {
+          const id = uuidv4();
+          const initialDocs = [
+            {
+              id,
+              title: '새 문서',
+              text: '',
+              updatedAt: new Date().toISOString(),
+            },
+          ];
+          setDocs(initialDocs);
+          setCurrentId(id);
+          setDocId(id);
+          setText('');
+          localStorage.setItem(
+            STORAGE_KEY,
+            JSON.stringify({ docs: initialDocs, currentId: id }),
+          );
+        } else {
+          setDocs(loadedDocs);
+          setCurrentId(loadedCurrentId);
+          setDocId(loadedCurrentId);
+          const currentDoc = loadedDocs.find((d) => d.id === loadedCurrentId);
+          setText(currentDoc?.text || '');
+        }
+      } else {
+        // 저장된 게 전혀 없으면 기본 문서 하나 생성
+        const id = uuidv4();
+        const initialDocs = [
+          {
+            id,
+            title: '새 문서',
+            text: '',
+            updatedAt: new Date().toISOString(),
+          },
+        ];
+        setDocs(initialDocs);
+        setCurrentId(id);
+        setDocId(id);
+        setText('');
+        localStorage.setItem(
+          STORAGE_KEY,
+          JSON.stringify({ docs: initialDocs, currentId: id }),
+        );
+      }
+    } catch (e) {
+      console.error('Failed to load docs from localStorage', e);
+    }
   }, []);
 
+  // 🔹 현재 문서(text)가 바뀔 때마다 docs 배열 & localStorage에 저장
+  useEffect(() => {
+    if (!currentId) return;
+
+    setDocs((prev) => {
+      const now = new Date().toISOString();
+      const idx = prev.findIndex((d) => d.id === currentId);
+      let next;
+
+      if (idx === -1) {
+        // 현재 id에 해당하는 문서가 없으면 새로 추가
+        next = [
+          {
+            id: currentId,
+            title: makeTitle(text),
+            text,
+            updatedAt: now,
+          },
+          ...prev,
+        ];
+      } else {
+        next = prev.map((d) =>
+          d.id === currentId
+            ? {
+                ...d,
+                text,
+                title: makeTitle(text),
+                updatedAt: now,
+              }
+            : d,
+        );
+      }
+
+      try {
+        localStorage.setItem(
+          STORAGE_KEY,
+          JSON.stringify({ docs: next, currentId }),
+        );
+      } catch {}
+
+      return next;
+    });
+  }, [text, currentId]);
+
   // 새 글 시작(좌측 사이드바에서 호출)
-  const handleNewDraft = async () => {
-    try {
-      const res = await api.post('/documents', { user_id: user.id });
-      const newDocId = res.data?.doc_id || uuidv4();
+  const handleNewDraft = () => {
+    const id = uuidv4();
+    const newDoc = {
+      id,
+      title: '새 문서',
+      text: '',
+      updatedAt: new Date().toISOString(),
+    };
 
-      setDocId(newDocId);
-      setText('');
-      setSelection({ text: '', start: 0, end: 0 });
-      setContext({ prev: '', next: '' });
-      setRecommendId(null);
-      setRecommendInsertId(null);
-      setRecoOptions([]);
-      setContextHash(null);
-      setCandidates([]);
-      setLastSnapshotTime(null);
-      setRefreshTrigger((v) => v + 1);
-
-      try {
-        localStorage.removeItem(STORAGE_KEY);
-      } catch {}
-    } catch (err) {
-      console.error('Failed to create new document', err);
-      // fallback: 로컬에서만 새 문서 시작
-      const fallbackId = uuidv4();
-      setDocId(fallbackId);
-      setText('');
-      setSelection({ text: '', start: 0, end: 0 });
-      setContext({ prev: '', next: '' });
-      setRecommendId(null);
-      setRecommendInsertId(null);
-      setRecoOptions([]);
-      setContextHash(null);
-      setCandidates([]);
-      setLastSnapshotTime(null);
-      try {
-        localStorage.removeItem(STORAGE_KEY);
-      } catch {}
-    }
+    setDocs((prev) => [newDoc, ...prev]);
+    setCurrentId(id);
+    setDocId(id);
+    setText('');
+    setSelection({ text: '', start: 0, end: 0 });
+    setContext({ prev: '', next: '' });
+    setRecommendId(null);
+    setRecommendInsertId(null);
+    setRecoOptions([]);
+    setContextHash(null);
+    setCandidates([]);
   };
 
-  // 좌측 사이드바에서 문서 선택 시 호출
-  const handleSelectDocument = async (doc) => {
-    if (!doc || !doc.doc_id) return;
-    try {
-      const res = await api.get(`/documents/${doc.doc_id}`, {
-        params: { user_id: user.id },
-      });
-      const fullText = res.data?.latest_full_text ?? '';
+  // 🔹 사이드바에서 문서 클릭 시
+  const handleSelectDraft = (id) => {
+    const doc = docs.find((d) => d.id === id);
+    if (!doc) return;
 
-      setDocId(doc.doc_id);
-      setText(fullText);
-      setSelection({ text: '', start: 0, end: 0 });
-      setContext({ prev: '', next: '' });
-      setRecommendId(null);
-      setRecommendInsertId(null);
-      setRecoOptions([]);
-      setContextHash(null);
-      setLastSnapshotTime(null);
-      setLastSnapshotText(fullText);
-    } catch (err) {
-      console.error('Failed to load document', err);
-    }
+    setCurrentId(id);
+    setDocId(id);
+    setText(doc.text || '');
+    setSelection({ text: '', start: 0, end: 0 });
+    setContext({ prev: '', next: '' });
+    setRecommendId(null);
+    setRecommendInsertId(null);
+    setRecoOptions([]);
+    setContextHash(null);
+    setCandidates([]);
   };
 
-  // 로그아웃(헤더에서 호출) — 현재는 로컬 상태/스토리지 초기화
-  const handleLogout = () => {
+  // 🔹 사이드바에서 문서 삭제
+  const handleDeleteDraft = (id) => {
+    const ok = window.confirm('이 문서를 삭제하시겠습니까?');
+    if (!ok) return;
+
+    let nextDocs = docs.filter((d) => d.id !== id);
+
+    // 현재 보고 있던 문서를 삭제한 경우
+    let nextCurrentId = currentId;
+    let nextText = text;
+
+    if (id === currentId) {
+      if (nextDocs.length > 0) {
+        // 남은 문서 중 첫 번째로 이동
+        nextCurrentId = nextDocs[0].id;
+        nextText = nextDocs[0].text || '';
+      } else {
+        // 하나도 안 남으면 새 문서 하나 생성
+        const newId = uuidv4();
+        const blankDoc = {
+          id: newId,
+          title: '새 문서',
+          text: '',
+          updatedAt: new Date().toISOString(),
+        };
+        nextDocs = [blankDoc];
+        nextCurrentId = newId;
+        nextText = '';
+      }
+    }
+
+    setDocs(nextDocs);
+    setCurrentId(nextCurrentId);
+    setDocId(nextCurrentId);
+    setText(nextText);
+
+    // 선택/후보/추천 상태 초기화
+    setSelection({ text: '', start: 0, end: 0 });
+    setContext({ prev: '', next: '' });
+    setRecommendId(null);
+    setRecommendInsertId(null);
+    setRecoOptions([]);
+    setContextHash(null);
+    setCandidates([]);
+
+    // localStorage 동기화
     try {
-      localStorage.clear();
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({ docs: nextDocs, currentId: nextCurrentId }),
+      );
     } catch {}
+  };
+
+  // ✅ 로그아웃(헤더에서 호출)
+  //    - auth.logout() 호출 → user=null → App이 Login 화면으로 전환
+  //    - 에디터 관련 로컬 상태 & localStorage도 초기화
+  const handleLogout = () => {
+    // 인증 정보 초기화 (AuthContext)
+    logout();
+
+    // 에디터 상태 초기화
+    try {
+      localStorage.removeItem(STORAGE_KEY);
+    } catch {}
+    setDocs([]);
+    setCurrentId(null);
+    setDocId(null);
     setText('');
     setSelection({ text: '', start: 0, end: 0 });
     setContext({ prev: '', next: '' });
@@ -149,17 +282,21 @@ export default function App() {
     setStrength(1);
     setRequestText('');
     setOptEnabled({ category: true, language: true, strength: true });
-    setDocId(uuidv4());
     setRecommendId(null);
+    setRecommendInsertId(null);
+    setRecoOptions([]);
+    setContextHash(null);
     setCandidates([]);
-    alert('로그아웃 (mock): 로컬 데이터가 초기화되었습니다.');
+
+    // 필요하면 alert 유지하거나 제거
+    // alert('로그아웃되었습니다.');
   };
 
   // 문맥(prev/next) 계산
   const updateContext = (fullText, start) => {
     const sentences = fullText.split(/(?<=[.!?])\s+/);
     let prev = '',
-        next = '';
+      next = '';
     let cumulative = 0;
     for (let i = 0; i < sentences.length; i++) {
       const s = sentences[i];
@@ -198,7 +335,7 @@ export default function App() {
 
     const payload = {
       doc_id: docId,
-      user_id: user?.id ?? 'anonymous',
+      user_id: user?.id ?? 'anonymous', // ✅ AuthContext에서 받은 user
       selected_text: sel.text,
       context_prev: ctx.prev || null,
       context_next: ctx.next || null,
@@ -288,10 +425,10 @@ export default function App() {
 
     const safeList = Array.isArray(list) ? list : list ? [list] : [];
 
-    // ✅ 후보 리스트 상태에 저장 → OptionPanel에서 버튼으로 보여줌
+    // 후보 리스트 상태에 저장 → OptionPanel에서 버튼으로 보여줌
     setCandidates(safeList);
 
-    // 후보가 생성된 것에 대한 별도 로그 남기고 싶으면 여기서
+    // 후보가 생성된 것에 대한 별도 로그
     logEvent({
       event: 'editor_paraphrasing_candidates',
       recommend_session_id: recommendId,
@@ -306,14 +443,11 @@ export default function App() {
       language,
       strength,
     });
-
   };
 
   // 후보 클릭 시 본문 반영하는 핸들러
   const handleApplyCandidate = (candidate, index) => {
     if (!selection.text) {
-      // 이론상 실행 직후에는 selection이 살아있어야 하지만,
-      // 방어적으로 체크
       alert('적용할 문장을 찾을 수 없습니다. 다시 문장을 선택하고 실행해 주세요.');
       return;
     }
@@ -323,12 +457,10 @@ export default function App() {
     const newText = before + candidate + after;
 
     setText(newText);
-    // ✅ 선택 해제 & 후보 리스트 비우기
     setSelection({ text: '', start: 0, end: 0 });
-    // ✅ 적용 후 후보 지우기
     setCandidates([]);
 
-    // ✅ 최종 채택 로그
+    // 최종 채택 로그
     logEvent({
       event: 'editor_selected_paraphrasing',
       recommend_session_id: recommendId,
@@ -349,7 +481,7 @@ export default function App() {
       response_time_ms: 0,
     });
 
-    // ✅ 히스토리 로그
+    // 히스토리 로그
     logEvent({
       event: 'correction_history',
       history_id: uuidv4(),
@@ -362,43 +494,46 @@ export default function App() {
       context_ref: `ctx_${Date.now()}`,
       created_at: new Date().toISOString(),
     });
-};
+  };
 
+  // ✅ 여기서 "로그인 여부"에 따라 다른 화면 렌더링
+  if (!user) {
+    // 로그인 안 된 상태 → 로그인 페이지부터 시작
+    return (
+      <div className="h-screen flex">
+        <Login />
+      </div>
+    );
+  }
 
+  // ✅ user가 있을 때만 원래 에디터 3열 레이아웃 보여주기
   return (
     <div className="h-screen flex flex-col">
       {/* 상단 헤더 */}
       <Header onLogout={handleLogout} />
 
       {/* 본문 3열 레이아웃: Sidebar | Editor | OptionPanel */}
-      <div className="
-              grid 
-              grid-cols-[240px_1fr_320px] 
-              gap-0 
-              h-[calc(100vh-4rem)] 
-            "
+      <div
+        className="
+          grid 
+          grid-cols-[240px_1fr_320px] 
+          gap-0 
+          h-[calc(100vh-4rem)] 
+        "
       >
+        {/* 사이드바 */}
         <aside className="border-r p-4">
           <Sidebar
-            userId={user?.id}
-            selectedDocId={docId}
-            refreshTrigger={refreshTrigger}
+            docs={docs}
+            currentId={currentId}
             onNew={handleNewDraft}
-            onSelectDoc={handleSelectDocument}
+            onSelect={handleSelectDraft}
+            onDelete={handleDeleteDraft}
           />
         </aside>
 
         <main className="p-4">
-          <div className="flex items-center justify-between mb-3">
-            <h1 className="text-xl font-semibold">에디터</h1>
-            <span className="text-xs text-gray-500">
-              {isSaving
-                ? '저장 중...'
-                : lastSnapshotTime
-                  ? '저장됨'
-                  : ''}
-            </span>
-          </div>
+          <h1 className="text-xl font-semibold mb-3">에디터</h1>
           <Editor
             text={text}
             setText={setText}
