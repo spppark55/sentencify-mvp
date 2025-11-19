@@ -119,6 +119,7 @@ services:
     volumes:
       - mongo-data:/data/db
       - ./docker/mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js:ro
+      - ./data/import:/data/import:ro
     networks:
       - sentencify-net
 

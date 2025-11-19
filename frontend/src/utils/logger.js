@@ -10,14 +10,12 @@ export async function logEvent(eventData) {
     // 콘솔 확인
     console.log('[Event Log]', eventData);
 
-    // 실제 서버 연동 시:
-    /*
-    await fetch("/api/log", {
+    // 실제 서버 연동 (/log → Vite proxy → FastAPI /log)
+    await fetch('/log', {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(eventData),
     });
-    */
   } catch (err) {
     console.error('Logging failed:', err);
   }

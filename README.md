@@ -1,272 +1,193 @@
-> ⚠️ **Phase1 개발용 빠른 실행 순서 (Mongo init + Kafka 포함)**  
-> 팀원이 새로 클론했을 때, 아래 순서대로 실행하면 동일한 환경이 구성됩니다.
->
-> 1. MongoDB 초기화(최초 1회, 또는 깨끗한 상태로 리셋하고 싶을 때만)  
->    ```bash
->    # 기존 mongo 컨테이너/볼륨 제거 - 데이터 전부 삭제되니 주의
->    docker compose -f docker-compose.mini.yml stop mongo
->    docker compose -f docker-compose.mini.yml rm -f mongo
->    docker volume rm sentencify-mvp_mongo-data  # 이름은 `docker volume ls`로 확인
->
->    # 다시 기동 (이때 docker/mongo-init.js가 자동 실행되어
->    # sentencify.correction_history / full_document_store 등 컬렉션+인덱스가 생성됨)
->    docker compose -f docker-compose.mini.yml up -d mongo
->    ```
-> 3. Kafka + 나머지 서비스 기동  
->    ```bash
->    docker compose -f docker-compose.mini.yml up -d kafka api frontend redis qdrant
->    ```
-> 2. Phase1용 Kafka 토픽 생성(최초 1회)  
->    ```bash
->    # A
->    docker compose -f docker-compose.mini.yml exec kafka \
->      kafka-topics --bootstrap-server kafka:9092 \
->      --create --topic editor_recommend_options \
->      --partitions 3 --replication-factor 1
->
->    # B
->    docker compose -f docker-compose.mini.yml exec kafka \
->      kafka-topics --bootstrap-server kafka:9092 \
->      --create --topic editor_run_paraphrasing \
->      --partitions 3 --replication-factor 1
->
->    # C
->    docker compose -f docker-compose.mini.yml exec kafka \
->      kafka-topics --bootstrap-server kafka:9092 \
->      --create --topic editor_selected_paraphrasing \
->      --partitions 3 --replication-factor 1
->
->    # E
->    docker compose -f docker-compose.mini.yml exec kafka \
->      kafka-topics --bootstrap-server kafka:9092 \
->      --create --topic context_block \
->      --partitions 3 --replication-factor 1
->
->    # I
->    docker compose -f docker-compose.mini.yml exec kafka \
->      kafka-topics --bootstrap-server kafka:9092 \
->      --create --topic model_score \
->      --partitions 3 --replication-factor 1
->    ```
-> 5. 동작 확인  
->    - 프론트: `http://localhost:5173`  
->    - API 문서: `http://localhost:8000/docs`  
->    - Mongo 컬렉션:  
->      ```bash
->      docker compose -f docker-compose.mini.yml exec mongo mongosh
->      use sentencify
->      show collections   # correction_history, full_document_store 등 확인
->      ```
->
-> 상세 진행 상황은 `docs/curr_progress.md`를 참고하세요.
+# Sentencify MVP – Phase 1 개발 환경
+
+Sentencify Phase 1(실시간 추천 및 데이터 파이프라인) 구축을 위한 통합 개발 환경입니다.  
+FastAPI(Backend), React(Frontend), Kafka, MongoDB, Qdrant, Redis가 Docker Compose로 통합되어 있습니다.
 
 ---
 
-# Sentencify MVP – 개발 환경 안내
+## 🚀 빠른 실행 가이드 (Quick Start)
 
-Sentencify Phase 1(실시간 추천 및 데이터 수집)을 위한 로컬 개발 환경입니다.
-본 프로젝트는 **Backend (FastAPI)**, **Frontend (React/Vite)**, **Infra(Kafka, MongoDB, Qdrant, Redis)** 를 Docker Compose 기반으로 통합 실행합니다.
-모든 개발은 VS Code Dev Containers 또는 로컬 환경 중 선택하여 진행할 수 있습니다.
+팀원은 아래 순서대로 실행하면, 동일한 환경에서 개발 및 테스트를 진행할 수 있습니다.
 
----
+### 1. 컨테이너 실행 (전체 서비스 기동)
 
-## 1. 구성 요소 (총 6개 서비스)
+최초 실행 시 이미지를 빌드하고 컨테이너를 띄웁니다.
 
-`docker-compose.mini.yml` 파일은 다음 6개의 컨테이너 서비스를 동시에 실행합니다.
+```bash
+# 프로젝트 루트에서 실행
+docker compose -f docker-compose.mini.yml up -d --build
+```
 
-1. `api`
-   FastAPI 기반의 추천 API 서버
-   주소: `http://localhost:8000`
+MongoDB는 `docker/mongo-init.js`를 통해 자동으로 기본 컬렉션/인덱스를 생성합니다  
+(`sentencify.correction_history`, `full_document_store`, `users` 등).
 
-2. `frontend`
-   React + Vite 기반 사용자 인터페이스
-   주소: `http://localhost:5173`
+### 2. (필수) Kafka 데이터 컨슈머 실행
 
-3. `kafka`
-   이벤트 스트림(A / B / C / E / I 이벤트) 처리용 메시지 큐
+**중요:** 추천/교정 데이터를 DB(Mongo/Qdrant)에 적재하려면 백그라운드 컨슈머를 별도로 켜야 합니다.
 
-4. `mongo`
-   Ground Truth 저장소 (`D.correction_history`)
+```bash
+# API 컨테이너 내부에서 컨슈머 스크립트 실행
+docker compose -f docker-compose.mini.yml exec -d api python -m app.consumer
+```
 
-5. `qdrant`
-   문맥 벡터 저장소 (`E.context_block`)
+### 3. 동작 확인
 
-6. `redis`
-   LLM 응답 캐시 저장소 (B 이벤트용)
+- **Frontend:** `http://localhost:5173`
+- **Backend Docs (Swagger):** `http://localhost:8000/docs`
+- **MongoDB (예: Compass):** `mongodb://localhost:27017`
 
-모든 서비스는 `sentencify-net` 네트워크를 통해 서로 서비스 이름(kafka, mongo 등)만으로 통신합니다.
-
----
-
-## 2. 시작하기
-
-개발을 시작하는 방법은 두 가지입니다.
-가급적 **VS Code Dev Container 방식(워크플로우 A)**을 권장합니다.
-
-### 워크플로우 A. VS Code Dev Container 사용 (권장)
-
-로컬 시스템에 Python 또는 Node를 설치하지 않아도 되고, 팀 전체가 동일한 개발 환경을 보장할 수 있습니다.
-
-**사전 요구사항**
-
-1. Docker Desktop (실행 중이어야 함)
-2. VS Code
-3. VS Code 확장: Dev Containers
-
-**실행 단계**
-
-1. 레포지토리 클론
-
-   ```bash
-   git clone https://github.com/<ORG_OR_USER>/sentencify-mvp.git
-   cd sentencify-mvp
-   ```
-
-2. VS Code로 폴더 열기
-
-   ```bash
-   code .
-   ```
-
-3. 하단 알림에서
-   **"Reopen in Container"** 선택
-   (또는 `Cmd + Shift + P` → `Dev Containers: Reopen in Container`)
-
-4. VS Code가 자동으로 다음을 수행
-
-   * docker compose up 실행
-   * api 컨테이너 내부로 VS Code 연결
-   * api 컨테이너 내부에서 개발 가능해짐
-
-**개발 환경 구동 완료 기준**
-
-* 6개 서비스(api, frontend, kafka, mongo, qdrant, redis)가 실행됨
-* VS Code 터미널은 자동으로 api 컨테이너 내부 쉘을 제공함
+자세한 진행 상황은 `docs/curr_progress.md`를 참고하세요.
 
 ---
 
-### 워크플로우 B. 로컬 환경에서 직접 실행 (선택)
+## 📊 현재 구현 기능 및 상태 (Phase 1 Status)
 
-VS Code Dev Container를 사용하지 않고 직접 실행하는 방법입니다.
+현재 **“실시간 추천 → 사용자 실행/선택 → 데이터 수집”**의 전체 사이클(E2E)이 연결되어 있습니다.
 
-1. Docker Compose 인프라 실행
+### 1. Frontend (React)
 
-   ```bash
-   docker compose -f docker-compose.mini.yml up -d --build
-   ```
+- 에디터 UI
+  - 텍스트 입력, 드래그 시 자동 추천 요청(`/recommend`).
+- 옵션 패널
+  - 카테고리, 언어, 강도 조절 및 서술형 요청 입력.
+- 이벤트 로깅
+  - 추천(A), 실행(B), 선택(C) 이벤트를 `logEvent` 유틸에서 `/log`로 전송.
+  - 동시에 `window.__eventLog`에 버퍼링하여 DebugPanel에서 확인 가능.
 
-2. 프론트엔드를 로컬에서 직접 실행하고 싶을 경우
+### 2. Backend (FastAPI)
 
-   ```bash
-   cd frontend
-   npm install
-   npm run dev
-   ```
+- `/recommend`
+  - Pydantic 기반 Request/Response 스키마 정의.
+  - `context_prev/next + selected_text`로 `context_full`, `context_hash` 계산.
+  - Stub `P_rule` / `P_vec`로 추천 카테고리 선택.
+  - A/I/E 이벤트를 Kafka 토픽 및 파일 로그(`logs/a.jsonl`, `logs/i.jsonl`, `logs/e.jsonl`)에 기록.
+- `/log`
+  - 프론트에서 전송한 이벤트 payload를 수신.
+  - `event` 필드에 따라:
+    - `editor_run_paraphrasing` → Kafka `editor_run_paraphrasing` + `logs/b.jsonl`.
+    - `editor_selected_paraphrasing` → Kafka `editor_selected_paraphrasing` + `logs/c.jsonl`.
+    - 기타 이벤트 → `logs/others.jsonl`에만 기록.
+- `/auth`
+  - `POST /auth/signup`:
+    - 이메일/비밀번호를 받아 `users` 컬렉션에 저장(이메일 유니크).
+  - `POST /auth/login`:
+    - 이메일/비밀번호 검증 후 JWT Access Token 발급(기본 24시간).
+  - 비밀번호 해싱: `passlib[bcrypt]`, JWT: `python-jose[cryptography]`.
 
----
+### 3. Data Pipeline (Kafka & Consumer)
 
-## 3. 접속 및 상태 확인
-
-서비스 실행 후 아래 주소에서 정상 작동 여부를 확인할 수 있습니다.
-
-* 프론트엔드
-  `http://localhost:5173`
-
-* 백엔드 FastAPI 문서(Swagger)
-  `http://localhost:8000/docs`
-
-* 실행 중인 컨테이너 확인
-
-  ```bash
-  docker ps
-  ```
-
-* 컨테이너 전체 중지
-
-  ```bash
-  docker compose -f docker-compose.mini.yml down
-  ```
-
----
-
-## 4. 개발 워크플로우 (Hot Reloading)
-
-`docker-compose.mini.yml`의 볼륨 설정으로 인해, 로컬에서 파일을 수정하면 컨테이너 내부 애플리케이션이 자동으로 재시작됩니다.
-
-* **프론트엔드 (React/Vite)**
-  `frontend/src` 내부 파일 수정 시 브라우저 자동 새로고침
-
-* **백엔드 (FastAPI)**
-  `api/app/main.py` 수정 시 `uvicorn` 자동 재시작
-  (Dev Container 사용 시 VS Code 터미널에서 로그 확인 가능)
+- Kafka Topic (Phase1)
+  - `editor_recommend_options` (A)
+  - `editor_run_paraphrasing` (B)
+  - `editor_selected_paraphrasing` (C)
+  - `context_block` (E)
+  - `model_score` (I)
+- Consumer (`api/app/consumer.py`)
+  - C 이벤트 (선택):
+    - 토픽 `editor_selected_paraphrasing`을 구독.
+    - `was_accepted != false` 인 이벤트를 MongoDB `sentencify.correction_history`에 insert.
+  - E 이벤트 (문맥):
+    - 토픽 `context_block`을 구독.
+    - Qdrant `context_block_v1` 컬렉션에 Stub 벡터(0 벡터, dim=768)와 함께 upsert.
 
 ---
 
-## 5. 디렉터리 구조
+## 🧪 테스트 시나리오
+
+Phase1이 올바르게 동작하는지 확인하려면 아래 시나리오를 따라가면 됩니다.
+
+1. 추천 요청
+   - 에디터에 문장을 여러 개 입력.
+   - 일부를 드래그 → 자동으로 `/recommend` 호출.
+   - 우측 옵션 패널에 추천 카테고리/언어가 갱신되는지 확인.
+2. 교정 실행 및 적용
+   - [실행(교정 후보 생성)] 버튼 클릭 → B 이벤트(`/log` → Kafka `editor_run_paraphrasing`).
+   - 후보 문장 중 하나를 선택/적용 → C 이벤트(`/log` → Kafka `editor_selected_paraphrasing`).
+3. 데이터 확인 (MongoDB)
+   - 터미널에서:
+     ```bash
+     docker compose -f docker-compose.mini.yml exec mongo \
+       mongosh sentencify --eval "db.correction_history.find().sort({_id:-1}).limit(1)"
+     ```
+   - 방금 선택한 문장/이벤트가 보이면 성공.
+
+---
+
+## 🛠️ 개발 팁 & 트러블슈팅
+
+### MongoDB 데이터 초기화
+
+DB를 완전히 초기화하고 싶다면 볼륨을 삭제하고 재기동합니다.
+
+```bash
+docker compose -f docker-compose.mini.yml down -v
+docker compose -f docker-compose.mini.yml up -d
+```
+
+### Kafka 토픽 생성 (최초 1회)
+
+Kafka 컨테이너가 올라온 뒤, Phase1에서 사용할 토픽을 생성합니다.
+
+```bash
+# 예시: A 이벤트용 토픽
+docker compose -f docker-compose.mini.yml exec kafka \
+  kafka-topics --bootstrap-server kafka:9092 \
+  --create --topic editor_recommend_options \
+  --partitions 3 --replication-factor 1
+```
+
+다른 토픽들(`editor_run_paraphrasing`, `editor_selected_paraphrasing`, `context_block`, `model_score`)도 같은 방식으로 생성할 수 있습니다.
+
+### 기업 데이터 Import (로컬 전용)
+
+`data/import/` 폴더에 기업 JSON 파일들을 넣고 아래 스크립트를 실행하면 MongoDB에 적재됩니다.
+
+```bash
+./scripts/mongo_import_company_data.sh
+```
+
+- 예:
+  - `data/import/correction_history.json` → `correction_history`
+  - `data/import/usage_summary.json` → `usage_summary`
+  - `data/import/client_properties.json` → `client_properties`
+  - `data/import/event_raw.json` → `event_raw`
+
+---
+
+## 📂 주요 디렉터리 구조
 
 ```
 sentencify-mvp/
-├── .devcontainer/
-│   └── devcontainer.json
-├── api/
+├── api/                  # FastAPI Backend
 │   ├── app/
-│   │   └── main.py
+│   │   ├── main.py       # API 엔드포인트 (/recommend, /log, /auth 등)
+│   │   ├── auth.py       # JWT 기반 인증 (signup/login)
+│   │   └── consumer.py   # Kafka C/E 이벤트 Consumer
 │   ├── requirements.txt
 │   └── Dockerfile
-├── docs/
-│   └── phase1/
-│       └── phase1-roadmap.md
-├── frontend/
+├── frontend/             # React Frontend
 │   ├── src/
-│   │   ├── utils/
 │   │   ├── App.jsx
-│   │   └── ...
+│   │   ├── DebugPanel.jsx
+│   │   ├── Editor.jsx
+│   │   ├── OptionPanel.jsx
+│   │   └── utils/
+│   │       ├── api.js    # axios 기반 /recommend 호출
+│   │       └── logger.js # /log 이벤트 전송 + 디버그 버퍼
 │   ├── package.json
-│   ├── vite.config.js
 │   └── Dockerfile
-├── docker-compose.mini.yml
-└── .gitignore
+├── docker/
+│   └── mongo-init.js     # Mongo 초기 컬렉션/인덱스 생성 스크립트
+├── docs/
+│   ├── curr_progress.md  # 실제 진행 로그
+│   └── phase1/           # Phase 1 설계/스펙 문서
+├── scripts/
+│   └── mongo_import_company_data.sh  # 기업 JSON → Mongo import 스크립트
+├── data/                 # 로컬 전용 데이터 (Git에 포함되지 않음)
+│   └── import/
+│       ├── correction_history.json
+│       ├── usage_summary.json
+│       ├── client_properties.json
+│       └── event_raw.json
+└── docker-compose.mini.yml          # 인프라 구성 (api, frontend, kafka, mongo, qdrant, redis)
 ```
-
----
-
-## 6. Phase 1 진행 상황 요약
-
-### 완료된 항목
-
-- 인프라 구축  
-  - FastAPI, Frontend, Kafka, MongoDB, Qdrant, Redis 통합 실행 (`docker-compose.mini.yml`)
-  - Kafka(KRaft 단일 노드) 설정 및 Phase1용 토픽 생성
-- MongoDB 기본 스키마 자동 생성  
-  - `docker/mongo-init.js`를 통해 `sentencify` DB에 다음 컬렉션/인덱스 자동 생성
-    - `correction_history` (D), `full_document_store` (K)  
-    - 선택: `usage_summary`, `client_properties`, `event_raw`, `metadata`
-- `/recommend` API 고도화 (Stub 기반)
-  - Pydantic 스키마: `RecommendRequest` / `RecommendResponse`
-  - `context_full` 조립 + `context_hash`(sha256) 생성
-  - Stub `P_rule`/`P_vec` + P_final로 추천 카테고리 선택
-  - A/I/E 이벤트를 Kafka 토픽 및 `logs/*.jsonl`에 발행
-  - `KAFKA_BOOTSTRAP_SERVERS` 환경변수로 Kafka Producer 사용
-- Frontend ↔ `/recommend` 연동
-  - 에디터 드래그 시 `/recommend` 호출
-  - 응답의 `insert_id`, `recommend_session_id`, `reco_options`, `P_rule`, `P_vec`, `context_hash`를 FE 상태 및 디버그 로그에 반영
-
-### 필요 작업 (진행 예정)
-
-1. **Mongo / Redis Data Layer 확장**
-   - `4_문장교정기록.json` → `correction_history` import (D)
-   - (선택) 기업 1~3 JSON → `usage_summary`, `client_properties`, `event_raw` import
-   - Redis LLM 캐시용 키 상수/클라이언트 헬퍼 정의
-
-2. **B/C 이벤트 FE ↔ BE ↔ Kafka 플로우**
-   - 백엔드: `POST /events/b`, `POST /events/c` 엔드포인트 추가 → Kafka `editor_run_paraphrasing`, `editor_selected_paraphrasing` 토픽으로 전달
-   - 프론트: 교정 실행/후보 적용 시 B/C payload를 위 엔드포인트로 전송
-
-3. **Kafka Consumers (특히 C/E)**
-   - E Consumer: `context_block` 토픽 구독 → Qdrant `context_block_v1` upsert (Stub 가능)
-   - C Consumer: `editor_selected_paraphrasing` 토픽 구독 → `correction_history`에 D 문서 insert
-
-4. **최종 E2E 검증**
-   - FE 드래그 → `/recommend` → B 실행 → C 선택 → Mongo/Qdrant/Redis까지 데이터 흐름 검증
-
-Phase 1의 공식 완료 기준(DoD)은 `docs/phase1/Phase 1 로드맵.md` 문서를 참고합니다.

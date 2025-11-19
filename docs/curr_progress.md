@@ -173,3 +173,256 @@
   - 이미 존재하는 `mongo-data` 볼륨이 있으면 init 스크립트는 다시 실행되지 않으므로,
     완전히 초기 상태를 맞추려면 `docker volume rm sentencify-mvp_mongo-data` 후 재기동이 필요하다(주의).
 
+---
+
+## 2025-11-18 – 기업 JSON import용 Mongo 스크립트 및 data 폴더 구조
+
+### 1. 기업 JSON 전용 data 폴더 및 Git 설정
+- 파일: `.gitignore`
+  - `data/` 항목 추가 → 기업 실제 JSON 데이터는 Git에 올라가지 않도록 설정.
+- 폴더:
+  - `data/` (프로젝트 루트)
+    - 팀원이 각자 로컬에서 기업 제공 JSON 파일을 여기에 복사해서 사용.
+    - 예: `data/4_문장교정기록.json` (D.correction_history 원본).
+
+### 2. Mongo 컨테이너에서 data 폴더 접근 설정
+- 파일: `docker-compose.mini.yml`
+- 변경 사항:
+  - `mongo` 서비스에 `./data`를 읽기 전용으로 마운트:
+    ```yaml
+    mongo:
+      image: mongo:6.0
+      ports:
+        - "27017:27017"
+      volumes:
+        - mongo-data:/data/db
+        - ./docker/mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js:ro
+        - ./data:/data/import:ro
+      networks:
+        - sentencify-net
+    ```
+- 효과:
+  - 호스트의 `sentencify-mvp/data/*` 파일이 Mongo 컨테이너 내부에서 `/data/import/*` 경로로 보인다.
+  - `mongoimport`로 로컬 JSON을 쉽게 import 가능.
+
+### 3. 기업 JSON import 스크립트 추가
+- 파일: `scripts/mongo_import_company_data.sh`
+- 역할:
+  - Phase1에서 사용하는 기업 JSON(D 스키마)을 MongoDB `sentencify.correction_history` 컬렉션에 import.
+- 주요 내용:
+  - 기본값:
+    - `COMPOSE_FILE = docker-compose.mini.yml`
+    - `DB_NAME = sentencify`
+    - 컨테이너 내부 데이터 경로: `/data/import`
+  - 실행 로직:
+    ```bash
+    docker compose -f "${COMPOSE_FILE}" exec mongo \
+      mongoimport \
+        --db "${DB_NAME}" \
+        --collection correction_history \
+        --file "/data/import/4_문장교정기록.json" \
+        --jsonArray
+    ```
+  - 실행 방법:
+    ```bash
+    cd sentencify-mvp
+    chmod +x scripts/mongo_import_company_data.sh  # 최초 1회
+    ./scripts/mongo_import_company_data.sh
+    ```
+- 주의 사항:
+  - JSON 파일들은 Git에 포함되지 않으며, 팀원이 각자 `data/import` 폴더에 수동으로 복사해야 한다.
+  - 컬렉션에 중복 insert를 방지하려면, 필요 시 `mongoimport` 옵션 또는 사전 정리 로직을 추가하는 것을 고려.
+
+---
+
+## 2025-11-18 – B/C 이벤트 수집용 /log 엔드포인트 추가
+
+### 1. LogRequest 모델 및 /log API
+- 파일: `api/app/main.py`
+- 추가/변경 사항:
+  - `LogRequest` Pydantic 모델 정의:
+    - 필드: `event: str`
+    - `extra = "allow"` 설정으로 나머지 필드는 자유롭게 허용 (전체 payload를 그대로 보존).
+  - `POST /log` 엔드포인트 추가:
+    - Body를 `LogRequest`로 수신하고 `req.model_dump()`로 전체 payload를 dict로 변환.
+    - `event` 필드 값에 따라 분기:
+      - `"editor_run_paraphrasing"` → B 이벤트로 처리.
+      - `"editor_selected_paraphrasing"` → C 이벤트로 처리.
+      - 그 외 이벤트 → `logs/others.jsonl`에만 기록.
+
+### 2. B/C 이벤트용 프로듀서 헬퍼
+- 파일: `api/app/main.py`
+- 추가 함수:
+  - `produce_b_event(payload: Dict) -> None`
+    - `logs/b.jsonl`에 append.
+    - Kafka Producer가 활성화되어 있으면 `editor_run_paraphrasing` 토픽으로 send.
+    - Kafka 오류 발생 시 예외를 삼키고 흐름 유지.
+  - `produce_c_event(payload: Dict) -> None`
+    - `logs/c.jsonl`에 append.
+    - Kafka Producer가 활성화되어 있으면 `editor_selected_paraphrasing` 토픽으로 send.
+    - Kafka 오류 발생 시 동일하게 무시.
+- 기존 A/I/E 헬퍼(`produce_a_event`, `produce_i_event`, `produce_e_event`)와 동일한 패턴 유지.
+
+### 3. Kafka 비활성화(KAFKA_ENABLED=false) 처리
+- `get_kafka_producer()` 로직을 재사용하여,
+  - `KAFKA_ENABLED=false`인 경우 `None`을 반환하며,
+  - B/C/A/I/E 모든 `produce_*_event` 함수에서 `producer is None`이면 Kafka 전송을 건너뛰도록 구현.
+- 결과:
+  - Kafka가 꺼져 있거나 설정이 잘못되더라도 `/recommend` 및 `/log`는 에러 없이 실행되고,
+  - 최소한 로컬 파일 로그(`logs/*.jsonl`)는 항상 남도록 보장.
+
+---
+
+## 2025-11-18 – Kafka C/E Consumer 스켈레톤 추가
+
+### 1. consumer.py 생성
+- 파일: `api/app/consumer.py`
+- 역할:
+  - Kafka 토픽에서 C/E 이벤트를 구독하여
+    - C: MongoDB `correction_history`에 적재
+    - E: Qdrant `context_block_v1`에 upsert
+  하는 Phase1용 Consumer 스켈레톤.
+
+### 2. 공통 설정
+- 사용 라이브러리:
+  - `kafka-python`, `pymongo`, `qdrant-client`
+- 환경변수:
+  - `KAFKA_BOOTSTRAP_SERVERS` (기본 `kafka:9092`)
+  - `MONGO_URI` (기본 `mongodb://mongo:27017`)
+  - `MONGO_DB_NAME` (기본 `sentencify`)
+  - `QDRANT_HOST` (기본 `qdrant`)
+  - `QDRANT_PORT` (기본 `6333`)
+  - `EMBED_DIM` (기본 `768`, Stub 벡터 차원)
+
+### 3. C 이벤트 Consumer (`editor_selected_paraphrasing`)
+- 함수: `process_c_events()`
+- 동작:
+  - KafkaConsumer 설정:
+    - 토픽: `editor_selected_paraphrasing`
+    - `auto_offset_reset="earliest"`, `enable_auto_commit=True`
+    - `group_id="sentencify_c_consumer"`
+  - 각 메시지에 대해:
+    - payload를 dict로 파싱.
+    - `was_accepted`가 명시적으로 `false`인 경우는 무시 (실제 채택된 것만 저장).
+    - MongoDB `sentencify.correction_history` 컬렉션에 `insert_one`:
+      - 전체 payload를 복사하고 `created_at`에 현재 UTC ISO 문자열을 추가.
+  - 예외 발생 시:
+    - 에러 메시지만 출력하고 루프는 계속.
+
+### 4. E 이벤트 Consumer (`context_block`)
+- 함수: `process_e_events()`
+- 동작:
+  - Qdrant 클라이언트 초기화 후 `ensure_qdrant_collection()` 호출:
+    - 컬렉션 이름: `context_block_v1`
+    - `VectorParams(size=EMBED_DIM, distance=Cosine)` 로 컬렉션이 없을 경우 생성.
+  - KafkaConsumer 설정:
+    - 토픽: `context_block`
+    - `group_id="sentencify_e_consumer"`
+  - 각 메시지에 대해:
+    - payload를 메타데이터로 활용.
+    - Stub 벡터 생성: `[0.0] * EMBED_DIM`
+    - Qdrant `upsert` 호출:
+      - `PointStruct(id=str(uuid.uuid4()), vector=vector, payload=payload)` 형태로 등록.
+  - 예외 발생 시:
+    - 에러 메시지를 출력하고 루프를 계속 진행.
+
+### 5. 실행 구조
+- `main()` 함수:
+  - 두 개의 데몬 스레드 생성:
+    - `process_c_events` / `process_e_events` 각각을 별도 스레드로 실행.
+  - 스레드 시작 후 `join()`으로 메인 스레드를 유지.
+  - `KeyboardInterrupt` 시에는 메시지만 출력하고 종료.
+- 엔트리포인트:
+  - `if __name__ == "__main__": main()` 블록을 추가하여
+    - `python -m app.consumer` 또는 `python app/consumer.py` 로 직접 실행 가능하도록 구성.
+
+---
+
+## 2025-11-18 – Infra: users 컬렉션 및 인증 의존성 추가
+
+### 1. Mongo users 컬렉션 준비
+- 파일: `docker/mongo-init.js`
+- 변경 사항:
+  - `users` 컬렉션 자동 생성 로직 추가:
+    - 컬렉션이 없을 경우 `db.createCollection("users")`.
+  - 인덱스:
+    - `db.users.createIndex({ email: 1 }, { unique: true })`  
+      → 이메일 기준 유저 조회 및 중복 방지용 Unique Index.
+- 효과:
+  - 새 환경에서 Mongo 컨테이너가 처음 올라올 때,
+    `sentencify.users` 컬렉션과 `email` 유니크 인덱스가 자동으로 준비되어,
+    이후 회원 관리/인증 기능을 구현할 때 바로 사용할 수 있음.
+
+### 2. API 인증 관련 라이브러리 의존성 추가
+- 파일: `api/requirements.txt`
+- 추가된 패키지:
+  - `python-jose[cryptography]`
+    - JWT 발급/검증용 라이브러리.
+  - `passlib[bcrypt]`
+    - 비밀번호 해싱/검증용 (bcrypt 스키마 사용).
+  - `python-multipart`
+    - FastAPI에서 form-data 기반 로그인/업로드 등을 처리할 때 필요한 의존성.
+- 현재는 실제 인증/회원 엔드포인트는 구현하지 않았으며,
+  - Phase1 이후 회원 관리 기능을 붙일 때 사용할 준비 단계로 패키지만 추가한 상태.
+
+---
+
+## 2025-11-18 – Backend: Implemented JWT Auth API (Ready for Frontend)
+
+### 1. Auth 라우터 및 Mongo users 연동
+- 파일: `api/app/auth.py`
+- 주요 내용:
+  - PyMongo 기반 `users` 컬렉션 헬퍼:
+    - `get_mongo_users_collection()` → `sentencify.users` 컬렉션 반환.
+  - 비밀번호 해싱/검증:
+    - `passlib.context.CryptContext` (bcrypt) 사용.
+    - `hash_password(password)`, `verify_password(plain, hashed)` 유틸 함수 정의.
+  - JWT 토큰 생성:
+    - `create_access_token(data, expires_delta)`:
+      - 기본 만료 시간: `ACCESS_TOKEN_EXPIRE_HOURS` (환경변수, 기본 24시간).
+      - `SECRET_KEY` 환경변수와 `HS256` 알고리즘으로 서명.
+  - Pydantic 모델:
+    - `SignupRequest`: `email: EmailStr`, `password: str`
+    - `LoginRequest`: `email: EmailStr`, `password: str`
+    - `TokenResponse`: `access_token`, `token_type="bearer"`
+
+### 2. `/auth/signup` 엔드포인트
+- 라우터: `auth_router.post("/signup")`
+- 동작:
+  - `SignupRequest` 수신 (`email`, `password`).
+  - `users.find_one({"email": req.email})`로 중복 이메일 체크:
+    - 이미 존재하면 HTTP 400 (`"Email already registered"`).
+  - 신규 유저 문서 생성:
+    - `email`
+    - `password_hash` (bcrypt 해시)
+    - `created_at` (UTC ISO 문자열)
+  - `insert_one` 후 `{"id": <inserted_id>, "email": ...}` 형태로 응답.
+
+### 3. `/auth/login` 엔드포인트
+- 라우터: `auth_router.post("/login")`, `response_model=TokenResponse`
+- 동작:
+  - `LoginRequest` 수신 (`email`, `password`).
+  - 해당 이메일 유저 조회:
+    - 없으면 HTTP 400 (`"Invalid credentials"`).
+  - bcrypt로 비밀번호 검증:
+    - 실패 시 동일하게 HTTP 400 (`"Invalid credentials"`).
+  - JWT Access Token 생성:
+    - payload: `{"sub": email, "user_id": str(user["_id"])}`.
+    - 만료: 기본 24시간(환경변수로 조정 가능).
+  - 응답:
+    - `{"access_token": "<JWT>", "token_type": "bearer"}`.
+
+### 4. main.py에 Auth Router 등록
+- 파일: `api/app/main.py`
+- 변경 사항:
+  - `from .auth import auth_router` import 추가.
+  - 파일 하단에:
+    ```python
+    app.include_router(auth_router, prefix="/auth")
+    ```
+    를 추가하여 `/auth/signup`, `/auth/login` 경로가 메인 FastAPI 앱에 노출되도록 설정.
+- 결과:
+  - 프론트엔드는 `/auth/signup`, `/auth/login`를 통해
+    - 회원 가입 / 로그인 + JWT 발급 플로우를 붙일 수 있는 상태가 되었음.
+  - 현재는 보호 라우터/토큰 검증 의존성은 추가하지 않았으며,
+    - 이후 필요 시 `Depends` 기반 JWT 검증 유틸을 같은 모듈에 확장 가능.

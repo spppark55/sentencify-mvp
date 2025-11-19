@@ -2,7 +2,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 import uuid
 from datetime import datetime, timezone
 
@@ -10,6 +10,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from kafka import KafkaProducer
 from pydantic import BaseModel
+from .auth import auth_router
 
 
 class RecommendRequest(BaseModel):
@@ -41,6 +42,13 @@ class RecommendResponse(BaseModel):
     api_version: str
     schema_version: str
     embedding_version: str
+
+
+class LogRequest(BaseModel):
+    event: str
+
+    class Config:
+        extra = "allow"
 
 
 app = FastAPI()
@@ -130,6 +138,28 @@ def produce_e_event(payload: Dict) -> None:
         try:
             producer.send("context_block", value=payload)
         except Exception:
+            pass
+
+
+def produce_b_event(payload: Dict) -> None:
+    append_jsonl("b.jsonl", payload)
+    producer = get_kafka_producer()
+    if producer is not None:
+        try:
+            producer.send("editor_run_paraphrasing", value=payload)
+        except Exception:
+            # B 이벤트는 로그용이므로 Kafka 오류는 무시
+            pass
+
+
+def produce_c_event(payload: Dict) -> None:
+    append_jsonl("c.jsonl", payload)
+    producer = get_kafka_producer()
+    if producer is not None:
+        try:
+            producer.send("editor_selected_paraphrasing", value=payload)
+        except Exception:
+            # C 이벤트도 Kafka 오류는 무시
             pass
 
 
@@ -228,3 +258,21 @@ async def recommend(req: RecommendRequest) -> RecommendResponse:
         schema_version=schema_version,
         embedding_version=embedding_version,
     )
+
+
+@app.post("/log")
+async def log_event(req: LogRequest) -> Dict[str, Any]:
+    payload: Dict[str, Any] = req.model_dump()
+    event = payload.get("event")
+
+    if event == "editor_run_paraphrasing":
+        produce_b_event(payload)
+    elif event == "editor_selected_paraphrasing":
+        produce_c_event(payload)
+    else:
+        append_jsonl("others.jsonl", payload)
+
+    return {"status": "ok"}
+
+
+app.include_router(auth_router, prefix="/auth")

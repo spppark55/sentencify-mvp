@@ -42,6 +42,12 @@ db.event_raw.createIndex({ event: 1, time: -1 });
 db.event_raw.createIndex({ insert_id: 1 }, { unique: true });
 db.event_raw.createIndex({ user_id: 1, time: -1 });
 
+// --- users (회원 관리용) ---
+if (!db.getCollectionNames().includes("users")) {
+  db.createCollection("users");
+}
+db.users.createIndex({ email: 1 }, { unique: true });
+
 // --- simple metadata record for debugging ---
 if (!db.metadata) {
   db.createCollection("metadata");
@@ -52,4 +58,3 @@ db.metadata.insertOne({
   created_at: new Date(),
   note: "Phase1 base collections and indexes initialized.",
 });
-
