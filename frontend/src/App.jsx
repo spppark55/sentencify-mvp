@@ -6,7 +6,7 @@ import Editor from './Editor.jsx';
 import OptionPanel from './OptionPanel.jsx';
 import { logEvent } from './utils/logger.js';
 import DebugPanel from './DebugPanel.jsx';
-import { postRecommend, postParaphrase } from './utils/api.js';
+import api, { postRecommend, postParaphrase } from './utils/api.js';
 
 const STORAGE_KEY = 'editor:draft:v1';
 
@@ -40,12 +40,26 @@ export default function App() {
   const [recoOptions, setRecoOptions] = useState([]);
   const [contextHash, setContextHash] = useState(null);
 
+  // 문서 관리 상태
+  const [lastSnapshotTime, setLastSnapshotTime] = useState(null);
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
+  const [isSaving, setIsSaving] = useState(false);
+  const [lastSnapshotText, setLastSnapshotText] = useState('');
+
   // 자동 저장
   useEffect(() => {
+    setIsSaving(true);
     const t = setTimeout(() => {
       try {
         localStorage.setItem(STORAGE_KEY, text);
-      } catch {}
+        const now = Date.now();
+        setLastSnapshotTime(now);
+        setRefreshTrigger((v) => v + 1);
+      } catch {
+        // ignore
+      } finally {
+        setIsSaving(false);
+      }
     }, 400);
     return () => clearTimeout(t);
   }, [text]);
@@ -59,19 +73,68 @@ export default function App() {
   }, []);
 
   // 새 글 시작(좌측 사이드바에서 호출)
-  const handleNewDraft = () => {
-    setText('');
-    setSelection({ text: '', start: 0, end: 0 });
-    setContext({ prev: '', next: '' });
-    setDocId(uuidv4());
-    setRecommendId(null);
-    setRecommendInsertId(null);
-    setRecoOptions([]);
-    setContextHash(null);
-    setCandidates([]);
+  const handleNewDraft = async () => {
     try {
-      localStorage.removeItem(STORAGE_KEY);
-    } catch {}
+      const res = await api.post('/documents', { user_id: user.id });
+      const newDocId = res.data?.doc_id || uuidv4();
+
+      setDocId(newDocId);
+      setText('');
+      setSelection({ text: '', start: 0, end: 0 });
+      setContext({ prev: '', next: '' });
+      setRecommendId(null);
+      setRecommendInsertId(null);
+      setRecoOptions([]);
+      setContextHash(null);
+      setCandidates([]);
+      setLastSnapshotTime(null);
+      setRefreshTrigger((v) => v + 1);
+
+      try {
+        localStorage.removeItem(STORAGE_KEY);
+      } catch {}
+    } catch (err) {
+      console.error('Failed to create new document', err);
+      // fallback: 로컬에서만 새 문서 시작
+      const fallbackId = uuidv4();
+      setDocId(fallbackId);
+      setText('');
+      setSelection({ text: '', start: 0, end: 0 });
+      setContext({ prev: '', next: '' });
+      setRecommendId(null);
+      setRecommendInsertId(null);
+      setRecoOptions([]);
+      setContextHash(null);
+      setCandidates([]);
+      setLastSnapshotTime(null);
+      try {
+        localStorage.removeItem(STORAGE_KEY);
+      } catch {}
+    }
+  };
+
+  // 좌측 사이드바에서 문서 선택 시 호출
+  const handleSelectDocument = async (doc) => {
+    if (!doc || !doc.doc_id) return;
+    try {
+      const res = await api.get(`/documents/${doc.doc_id}`, {
+        params: { user_id: user.id },
+      });
+      const fullText = res.data?.latest_full_text ?? '';
+
+      setDocId(doc.doc_id);
+      setText(fullText);
+      setSelection({ text: '', start: 0, end: 0 });
+      setContext({ prev: '', next: '' });
+      setRecommendId(null);
+      setRecommendInsertId(null);
+      setRecoOptions([]);
+      setContextHash(null);
+      setLastSnapshotTime(null);
+      setLastSnapshotText(fullText);
+    } catch (err) {
+      console.error('Failed to load document', err);
+    }
   };
 
   // 로그아웃(헤더에서 호출) — 현재는 로컬 상태/스토리지 초기화
@@ -319,18 +382,33 @@ export default function App() {
 
       {/* 본문 3열 레이아웃: Sidebar | Editor | OptionPanel */}
       <div className="
-              grid 
-              grid-cols-[240px_1fr_320px] 
-              gap-0 
-              h-[calc(100vh-4rem)] 
+              grid
+              grid-cols-[240px_1fr_320px]
+              gap-0
+              h-[calc(100vh-4rem)]
             "
       >
         <aside className="border-r p-4">
-          <Sidebar onNew={handleNewDraft} />
+          <Sidebar
+            userId={user?.id}
+            selectedDocId={docId}
+            refreshTrigger={refreshTrigger}
+            onNew={handleNewDraft}
+            onSelectDoc={handleSelectDocument}
+          />
         </aside>
 
         <main className="p-4">
-          <h1 className="text-xl font-semibold mb-3">에디터</h1>
+          <div className="flex items-center justify-between mb-3">
+            <h1 className="text-xl font-semibold">에디터</h1>
+            <span className="text-xs text-gray-500">
+              {isSaving
+                ? '저장 중...'
+                : lastSnapshotTime
+                  ? '저장됨'
+                  : ''}
+            </span>
+          </div>
           <Editor
             text={text}
             setText={setText}
