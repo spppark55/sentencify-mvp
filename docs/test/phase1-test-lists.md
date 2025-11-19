@@ -1,0 +1,126 @@
+# Phase 1 QA 테스트 체크리스트
+
+> 이 문서는 기능 구현 시마다 업데이트됩니다.  
+> 실제 구현/변경 사항은 `docs/curr_progress.md`와 `README.md`를 함께 참고하세요.
+
+---
+
+## 1. Backend API Basic
+
+- [ ] **`/recommend` 기본 응답 필드 검증**
+  - [ ] `POST /recommend` 호출 시 HTTP 200을 반환한다.
+  - [ ] 응답 JSON에 `insert_id`가 존재하며 문자열이다.
+  - [ ] 응답 JSON에 `recommend_session_id`가 존재하며 문자열이다.
+  - [ ] `reco_options` 배열이 최소 1개 이상의 요소를 가진다.
+  - [ ] `P_rule`, `P_vec`가 객체 형태로 존재한다(Stub 값이어도 OK).
+  - [ ] `context_hash`가 64자리 hex 문자열(sha256) 형태인지 확인한다.
+
+- [ ] **`/recommend` ID/Hash 규칙 검증 (간단)**
+  - [ ] 동일한 `doc_id` + `context_prev/selected/context_next`로 두 번 호출했을 때 `context_hash`가 동일한지 확인한다.
+  - [ ] `insert_id`, `recommend_session_id`는 요청마다 서로 다른 값으로 발급되는지 확인한다.
+
+- [ ] **`/log` B/C 이벤트 수신 검증**
+  - [ ] `POST /log`에 `{"event":"editor_run_paraphrasing", ...}` payload를 보내면 HTTP 200과 `{"status":"ok"}`를 반환한다.
+  - [ ] 동일하게 `{"event":"editor_selected_paraphrasing", ...}` payload를 보내도 에러 없이 처리된다.
+  - [ ] 위 두 요청 이후 `logs/b.jsonl`, `logs/c.jsonl`에 이벤트가 한 줄씩 append 되었는지 확인한다.
+  - [ ] Kafka가 꺼져 있더라도 `/log`에서 5xx 에러 없이 성공 응답을 주는지 확인한다(KAFKA_ENABLED=false 시나리오).
+
+---
+
+## 2. Authentication (Auth)
+
+- [ ] **회원가입 `/auth/signup`**
+  - [ ] 유효한 이메일/비밀번호로 `POST /auth/signup`을 호출했을 때 HTTP 200 또는 201 응답을 받는다.
+  - [ ] 응답 JSON에 `id`, `email` 필드가 있으며, `email`이 요청 값과 동일한지 확인한다.
+  - [ ] MongoDB `sentencify.users` 컬렉션에서 해당 이메일로 문서가 생성되었는지 확인한다.
+  - [ ] 같은 이메일로 다시 `/auth/signup` 호출 시 HTTP 400과 `"Email already registered"` 메시지가 반환되는지 확인한다.
+
+- [ ] **로그인 `/auth/login`**
+  - [ ] 가입된 이메일/비밀번호로 `POST /auth/login`을 호출했을 때 HTTP 200 응답을 받는다.
+  - [ ] 응답 JSON에 `access_token`, `token_type` 필드가 존재하며, `token_type`은 `"bearer"`인지 확인한다.
+  - [ ] `access_token`이 비어 있지 않은 문자열이며 JWT 형식을 따르는지(`header.payload.signature`) 대략적으로 확인한다.
+  - [ ] 잘못된 비밀번호로 로그인 요청 시 HTTP 400과 `"Invalid credentials"` 메시지가 반환되는지 확인한다.
+  - [ ] 존재하지 않는 이메일로 로그인 요청 시에도 HTTP 400과 `"Invalid credentials"` 메시지가 반환되는지 확인한다.
+  - [ ] 로그아웃 시 localStorage에서 user/token 키가 삭제되고, 이후 보호 API 호출에 Authorization 헤더가 빠지는지 확인한다.
+
+---
+
+## 3. Data Pipeline (Kafka & Consumer)
+
+> 사전 조건: Kafka 컨슈머(`python -m app.consumer`)가 실행 중이어야 한다.
+
+- [ ] **추천 요청 시 A/I/E 이벤트 Kafka 적재**
+  - [ ] 에디터에서 문장을 드래그하거나, 직접 `POST /recommend`를 호출한다.
+  - [ ] `kafka-console-consumer`를 이용해 `editor_recommend_options` 토픽에서 A 이벤트가 수신되는지 확인한다.
+  - [ ] 동일하게 `model_score`(I), `context_block`(E) 토픽에서도 메시지가 수신되는지 확인한다.
+
+- [ ] **E Consumer → Qdrant upsert 동작 확인**
+  - [ ] `context_block` 토픽에 E 이벤트가 들어간 이후, Qdrant 클라이언트 또는 HTTP API로 `context_block_v1` 컬렉션을 조회한다.
+  - [ ] 새로운 point가 추가되었는지, `payload`에 원본 E 이벤트 필드(doc_id, context_full 등)가 포함되는지 확인한다.
+  - [ ] 벡터 길이가 `EMBED_DIM`(기본 768)인지 확인한다(Stub 벡터여도 OK).
+
+- [ ] **C Consumer → Mongo `correction_history` 적재 동작 확인**
+  - [ ] 프론트에서 추천 후 교정 후보를 선택하거나, `/log`로 `editor_selected_paraphrasing` 이벤트를 전송한다(`was_accepted=true`).
+  - [ ] MongoDB `sentencify.correction_history` 컬렉션에서 가장 최근 문서를 조회한다.
+  - [ ] 해당 문서에 C 이벤트의 주요 필드(`recommend_session_id`, `source_recommend_event_id`, `selected_candidate_text` 등)가 포함되는지 확인한다.
+  - [ ] `created_at` 필드가 현재 UTC 기준 타임스탬프로 들어갔는지 확인한다.
+
+---
+
+## 4. Frontend E2E (User Scenario)
+
+- [ ] **로그인/회원가입 화면 및 토큰 저장**
+  - [ ] Frontend에서 회원가입/로그인 UI를 통해 `POST /auth/signup`, `POST /auth/login` 호출이 정상적으로 이루어지는지 확인한다.
+  - [ ] 로그인 성공 후, 토큰이 브라우저 저장소(예: localStorage 또는 메모리 상태)에 저장되는지 확인한다(현재 구현 방식 기준).
+  - [ ] 로그인 상태에서 헤더/메뉴 등이 로그인 사용자 상태를 반영하는지 확인한다(예: 로그아웃 버튼 노출).
+
+- [ ] **에디터 문장 드래그 → 추천 옵션 패널 표시**
+  - [ ] 에디터에 여러 문장을 입력한다.
+  - [ ] 하나의 문장을 드래그했을 때, `/recommend` 호출이 발생하는지 Network 탭에서 확인한다.
+  - [ ] 호출 성공 후, 우측 옵션 패널에 추천 카테고리/언어/강도(또는 상태)가 갱신되는지 확인한다.
+
+- [ ] **'실행(교정 후보 생성)' → B 이벤트 로그 전송**
+  - [ ] 문장을 선택한 뒤 '실행(교정 후보 생성)' 버튼을 클릭한다.
+  - [ ] 브라우저 Network 탭에서 `/log` 요청이 발생하고, `event: "editor_run_paraphrasing"` payload가 전송되는지 확인한다.
+  - [ ] DebugPanel 또는 `window.__eventLog`에서 B 이벤트 로그가 추가되었는지 확인한다.
+  - [ ] Kafka `editor_run_paraphrasing` 토픽에 B 이벤트가 적재되었는지도 선택적으로 확인한다.
+
+- [ ] **후보 선택 → 본문 변경 + C 이벤트 로그 전송**
+  - [ ] 실행 후 표시된 교정 후보 중 하나를 클릭하여 본문에 적용한다.
+  - [ ] 에디터의 텍스트가 선택한 교정 후보로 변경되었는지 확인한다.
+  - [ ] 브라우저 Network 탭에서 `/log` 요청이 발생하고, `event: "editor_selected_paraphrasing"` payload가 전송되는지 확인한다.
+  - [ ] DebugPanel 또는 `window.__eventLog`에서 C 이벤트 로그가 추가되었는지 확인한다.
+  - [ ] Kafka `editor_selected_paraphrasing` 토픽 및 Mongo `correction_history`에서 해당 이벤트/문서가 생성되었는지 확인한다.
+
+---
+
+## 5. Document Management (Phase 1.5)
+
+- [ ] **Snapshot Throttling (FE)**
+  - [ ] 에디터에 타이핑 시, 글자 입력마다 스냅샷이 전송되지 않고 **입력이 멈춘 뒤 약 2초 후** 또는 **마지막 스냅샷 이후 30초 이상 경과했을 때**에만 `editor_document_snapshot` 이벤트가 전송되는지 확인한다.
+  - [ ] 같은 내용으로 연속해서 입력/백스페이스를 반복했을 때, `lastSnapshotText`와 현재 텍스트가 동일하면 스냅샷이 다시 전송되지 않는지 확인한다.
+
+- [ ] **Document Storage (BE Consumer – K 이벤트)**
+  - [ ] `editor_document_snapshot` 이벤트 전송 후 MongoDB `full_document_store` 컬렉션에 해당 `doc_id` 문서가 생성되는지 확인한다.
+  - [ ] 동일 `doc_id`로 여러 번 스냅샷을 보냈을 때:
+    - [ ] `latest_full_text`에 최신 내용이 저장되는지 확인한다.
+    - [ ] `previous_full_text`에 이전 내용이 보존되는지 확인한다.
+    - [ ] `diff_ratio`가 0~1 사이 값으로 업데이트되는지 확인한다(길이 차이 비율 기준 Stub).
+
+- [ ] **Document API (BE)**
+  - [ ] `GET /documents?user_id=...` 호출 시 저장된 문서 목록이 반환되는지 확인한다.
+  - [ ] 응답에서 `preview_text`가 실제 본문(`latest_full_text`)의 앞부분과 일치하는지 확인한다.
+  - [ ] 목록이 `last_synced_at` 기준 내림차순(가장 최근 수정 문서가 상단)에 정렬되어 있는지 확인한다.
+  - [ ] `DELETE /documents/{doc_id}?user_id=...` 호출 시 해당 문서가 DB에서 삭제되고, 이후 `GET /documents` 결과에서도 사라지는지 확인한다.
+
+- [ ] **Sidebar UX (FE)**
+  - [ ] 사이드바에 Mock 데이터(Draft A/B/C) 대신 실제 `GET /documents` 응답 기반 문서 목록이 표시되는지 확인한다.
+  - [ ] 사이드바에서 문서 항목을 클릭했을 때, 에디터에 해당 문서 내용(`latest_full_text`)이 정상적으로 로드되는지 확인한다.
+  - [ ] 사이드바의 삭제 버튼을 클릭했을 때:
+    - [ ] 백엔드에서 문서가 삭제되고,
+    - [ ] 목록에서 즉시 제거되는지 확인한다.
+
+---
+
+이 체크리스트는 Phase 1 및 Phase 1.5 기능이 확장될 때마다 계속 보완/추가될 예정입니다.
+

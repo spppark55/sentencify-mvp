@@ -6,10 +6,11 @@ from typing import Any, Dict, Optional
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
 from kafka import KafkaProducer
 from pydantic import BaseModel
+from pymongo import MongoClient
 from .auth import auth_router
 
 from app.qdrant.service import compute_p_vec
@@ -53,6 +54,10 @@ class LogRequest(BaseModel):
         extra = "allow"
 
 
+class CreateDocumentRequest(BaseModel):
+    user_id: str
+
+
 app = FastAPI()
 
 app.add_middleware(
@@ -74,8 +79,11 @@ async def startup_event():
 LOG_DIR = Path("logs")
 KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
 KAFKA_ENABLED = os.getenv("KAFKA_ENABLED", "true").lower() != "false"
+MONGO_URI = os.getenv("MONGO_URI", "mongodb://mongo:27017")
+MONGO_DB_NAME = os.getenv("MONGO_DB_NAME", "sentencify")
 
 _kafka_producer: KafkaProducer | None = None
+_mongo_client: MongoClient | None = None
 
 
 def get_kafka_producer() -> KafkaProducer | None:
@@ -92,6 +100,14 @@ def get_kafka_producer() -> KafkaProducer | None:
     except Exception:
         _kafka_producer = None
     return _kafka_producer
+
+
+def get_mongo_collection(name: str):
+    global _mongo_client
+    if _mongo_client is None:
+        _mongo_client = MongoClient(MONGO_URI)
+    db = _mongo_client[MONGO_DB_NAME]
+    return db[name]
 
 
 def _now_iso() -> str:
@@ -170,6 +186,17 @@ def produce_c_event(payload: Dict) -> None:
             producer.send("editor_selected_paraphrasing", value=payload)
         except Exception:
             # C 이벤트도 Kafka 오류는 무시
+            pass
+
+
+def produce_k_event(payload: Dict) -> None:
+    append_jsonl("k.jsonl", payload)
+    producer = get_kafka_producer()
+    if producer is not None:
+        try:
+            producer.send("editor_document_snapshot", value=payload)
+        except Exception:
+            # K 이벤트도 Kafka 오류는 무시
             pass
 
 
@@ -286,6 +313,8 @@ async def log_event(req: LogRequest) -> Dict[str, Any]:
         produce_b_event(payload)
     elif event == "editor_selected_paraphrasing":
         produce_c_event(payload)
+    elif event == "editor_document_snapshot":
+        produce_k_event(payload)
     else:
         append_jsonl("others.jsonl", payload)
 
@@ -293,3 +322,103 @@ async def log_event(req: LogRequest) -> Dict[str, Any]:
 
 
 app.include_router(auth_router, prefix="/auth")
+
+
+@app.get("/documents")
+async def list_documents(user_id: str = Query(...)) -> Dict[str, Any]:
+    if not user_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="user_id is required",
+        )
+
+    collection = get_mongo_collection("full_document_store")
+    cursor = collection.find({"user_id": user_id}).sort("last_synced_at", -1)
+
+    items: list[Dict[str, Any]] = []
+    for doc in cursor:
+        doc_id = doc.get("doc_id")
+        latest_full_text = doc.get("latest_full_text") or ""
+        preview_text = latest_full_text[:50] if latest_full_text else "새 문서"
+        last_synced_at = doc.get("last_synced_at")
+        # 문자열로 정규화
+        if isinstance(last_synced_at, (datetime,)):
+            last_synced_at = last_synced_at.isoformat()
+        items.append(
+            {
+                "doc_id": doc_id,
+                "latest_full_text": latest_full_text,
+                "preview_text": preview_text,
+                "last_synced_at": last_synced_at,
+            }
+        )
+
+    return {"items": items}
+
+
+@app.delete("/documents/{doc_id}")
+async def delete_document(doc_id: str, user_id: str = Query(...)) -> Dict[str, Any]:
+    if not user_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="user_id is required",
+        )
+
+    collection = get_mongo_collection("full_document_store")
+    result = collection.delete_one({"doc_id": doc_id, "user_id": user_id})
+    return {"deleted": result.deleted_count}
+
+
+@app.get("/documents/{doc_id}")
+async def get_document(doc_id: str, user_id: str = Query(...)) -> Dict[str, Any]:
+    if not user_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="user_id is required",
+        )
+
+    collection = get_mongo_collection("full_document_store")
+    doc = collection.find_one({"doc_id": doc_id, "user_id": user_id})
+    if not doc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="document not found",
+        )
+
+    latest_full_text = doc.get("latest_full_text") or ""
+    last_synced_at = doc.get("last_synced_at")
+    if isinstance(last_synced_at, datetime):
+        last_synced_at = last_synced_at.isoformat()
+
+    return {
+        "doc_id": doc_id,
+        "user_id": user_id,
+        "latest_full_text": latest_full_text,
+        "last_synced_at": last_synced_at,
+    }
+
+
+@app.post("/documents")
+async def create_document(req: CreateDocumentRequest) -> Dict[str, Any]:
+    if not req.user_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="user_id is required",
+        )
+
+    collection = get_mongo_collection("full_document_store")
+    doc_id = str(uuid.uuid4())
+    now = _now_iso()
+
+    doc = {
+        "doc_id": doc_id,
+        "user_id": req.user_id,
+        "latest_full_text": "",
+        "previous_full_text": None,
+        "diff_ratio": 0.0,
+        "created_at": now,
+        "last_synced_at": now,
+    }
+    collection.insert_one(doc)
+
+    return {"doc_id": doc_id, "created_at": now}

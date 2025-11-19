@@ -23,10 +23,10 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def get_mongo_collection():
+def get_mongo_collection(name: str):
     client = MongoClient(MONGO_URI)
     db = client[MONGO_DB_NAME]
-    return db["correction_history"]
+    return db[name]
 
 
 def get_qdrant_client() -> QdrantClient:
@@ -55,7 +55,7 @@ def make_stub_vector() -> list[float]:
 
 
 def process_c_events() -> None:
-    collection = get_mongo_collection()
+    collection = get_mongo_collection("correction_history")
     consumer = KafkaConsumer(
         "editor_selected_paraphrasing",
         bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
@@ -117,19 +117,86 @@ def process_e_events() -> None:
             print(f"[E-consumer] error processing message: {exc}")
 
 
+def process_k_events() -> None:
+    collection = get_mongo_collection("full_document_store")
+    consumer = KafkaConsumer(
+        "editor_document_snapshot",
+        bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
+        value_deserializer=lambda v: json.loads(v.decode("utf-8")),
+        auto_offset_reset="earliest",
+        enable_auto_commit=True,
+        group_id="sentencify_k_consumer",
+    )
+    print("[K-consumer] started, listening on topic editor_document_snapshot")
+
+    for msg in consumer:
+        try:
+            payload: Dict[str, Any] = msg.value
+            doc_id = payload.get("doc_id")
+            if not doc_id:
+                print("[K-consumer] skip message without doc_id")
+                continue
+
+            full_text = payload.get("full_text") or ""
+            now = now_iso()
+
+            existing = collection.find_one({"doc_id": doc_id})
+
+            if existing:
+                prev_text = existing.get("latest_full_text") or ""
+                curr_text = full_text
+
+                len_prev = len(prev_text)
+                len_curr = len(curr_text)
+                len_diff = abs(len_curr - len_prev)
+                denominator = max(len_prev, 1)
+                diff_ratio = len_diff / denominator
+
+                collection.update_one(
+                    {"_id": existing["_id"]},
+                    {
+                        "$set": {
+                            "previous_full_text": prev_text,
+                            "latest_full_text": curr_text,
+                            "diff_ratio": diff_ratio,
+                            "last_synced_at": now,
+                        }
+                    },
+                )
+                print("[K-consumer] updated full_document_store document")
+            else:
+                doc = {
+                    "doc_id": doc_id,
+                    "latest_full_text": full_text,
+                    "previous_full_text": None,
+                    "diff_ratio": 1.0,
+                    "created_at": now,
+                    "last_synced_at": now,
+                }
+                user_id = payload.get("user_id")
+                if user_id is not None:
+                    doc["user_id"] = user_id
+                collection.insert_one(doc)
+                print("[K-consumer] inserted new full_document_store document")
+        except Exception as exc:
+            print(f"[K-consumer] error processing message: {exc}")
+
+
 def main() -> None:
     threads: list[threading.Thread] = []
 
     t_c = threading.Thread(target=process_c_events, name="c-consumer", daemon=True)
     t_e = threading.Thread(target=process_e_events, name="e-consumer", daemon=True)
+    t_k = threading.Thread(target=process_k_events, name="k-consumer", daemon=True)
 
     threads.append(t_c)
     threads.append(t_e)
+    threads.append(t_k)
 
     for t in threads:
         t.start()
 
-    print("[consumer] C/E consumers started. Press Ctrl+C to exit.")
+    print("[consumer] C/E/K consumers started. Press Ctrl+C to exit.")
 
     try:
         # 메인 스레드를 살아 있게 유지
@@ -141,4 +208,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

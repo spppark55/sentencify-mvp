@@ -426,3 +426,187 @@
     - 회원 가입 / 로그인 + JWT 발급 플로우를 붙일 수 있는 상태가 되었음.
   - 현재는 보호 라우터/토큰 검증 의존성은 추가하지 않았으며,
     - 이후 필요 시 `Depends` 기반 JWT 검증 유틸을 같은 모듈에 확장 가능.
+
+---
+
+## 2025-11-18 – Frontend: Integrated Real Auth API (Login/Signup)
+
+### 1. AuthContext에서 실제 /auth API 연동
+- 파일: `frontend/src/auth/AuthContext.jsx`
+- 변경 사항:
+  - `../utils/api.js`의 axios 인스턴스(`api`)를 사용하도록 변경.
+  - 로컬 스토리지 키:
+    - 사용자 정보: `auth:user:v1`
+    - 액세스 토큰: `auth:token:v1`
+  - 초기화 로직:
+    - 마운트 시 localStorage에서 user/token을 읽어 `user` 상태를 복원하고,
+      토큰이 있으면 `api.defaults.headers.common.Authorization = "Bearer <token>"` 설정.
+
+### 2. 로그인 / 회원가입 / 로그아웃 구현
+- `login({ email, password })`:
+  - `POST /auth/login` 호출 → `access_token` 수신.
+  - `user = { email }` 상태로 세팅.
+  - localStorage에 user/token 저장.
+  - axios default header에 `Authorization: Bearer <token>` 설정.
+- `signup({ email, password })`:
+  - `POST /auth/signup` 호출.
+  - 성공 시 `login({ email, password })`를 호출하여 자동 로그인 처리.
+- `logout()`:
+  - `user` 상태를 `null`로 초기화.
+  - localStorage에서 user/token 키 제거.
+  - axios default header에서 `Authorization` 제거.
+
+### 3. 효과
+- 프론트엔드에서 Mock Auth 대신 실제 FastAPI `/auth/signup`, `/auth/login` API를 사용하여 인증 플로우 구현.
+- 이후 보호된 API를 호출할 때 Authorization 헤더를 자동으로 사용할 수 있는 기반이 준비됨.
+
+---
+
+## 2025-11-18 – Frontend UX: Auto-refresh Sidebar on save
+
+### 1. 자동 저장 시 Sidebar 문서 목록 갱신 트리거
+- 파일: `frontend/src/App.jsx`, `frontend/src/Sidebar.jsx`
+- 변경 사항:
+  - `App.jsx`:
+    - 상태 추가:
+      - `lastSnapshotTime` (최근 자동 저장/스냅샷 시간)
+      - `refreshTrigger` (Sidebar 목록 갱신용 카운터)
+      - `isSaving` (저장 중 표시용)
+    - 자동 저장(useEffect) 로직 보완:
+      - 텍스트 변경 시 400ms debounce 후 localStorage에 저장.
+      - 저장 직후:
+        - `lastSnapshotTime = Date.now()`
+        - `refreshTrigger++`
+        - `isSaving = false`
+      - 효과: 실제 K 이벤트/스냅샷 성공 시점에 맞춰 이 부분만 조정하면, Sidebar가 자동으로 최신 목록을 가져오게 됨.
+    - Sidebar에 `refreshTrigger` 전달:
+      ```jsx
+      <Sidebar
+        userId={user?.id}
+        refreshTrigger={refreshTrigger}
+        ...
+      />
+      ```
+  - `Sidebar.jsx`:
+    - `refreshTrigger`를 props로 받아 `useEffect` 의존성에 추가:
+      - `useEffect(..., [userId, refreshTrigger])`
+      - 값이 바뀔 때마다 `GET /documents?user_id=...`를 다시 호출하여 문서 목록을 갱신.
+
+### 2. 저장 상태 표시 UX
+- 파일: `frontend/src/App.jsx`
+- 변경 사항:
+  - 에디터 제목 옆에 저장 상태 텍스트 추가:
+    ```jsx
+    <div className="flex items-center justify-between mb-3">
+      <h1 className="text-xl font-semibold">에디터</h1>
+      <span className="text-xs text-gray-500">
+        {isSaving ? '저장 중...' : lastSnapshotTime ? '저장됨' : ''}
+      </span>
+    </div>
+    ```
+  - 텍스트 입력 직후에는 잠깐 `저장 중...`이 표시되고,
+    자동 저장이 끝난 뒤에는 `저장됨`으로 상태가 바뀜.
+- 효과:
+  - 사용자가 문서를 편집했을 때 “어디까지 저장됐는지”를 직관적으로 파악할 수 있고,
+  - Sidebar에도 자동으로 최신 문서 목록이 반영되어 저장 여부를 확인하기 쉬워짐.
+
+---
+
+## 2025-11-18 – Frontend UX: Create document + immediate Sidebar refresh
+
+### 1. 새 글 생성 시 백엔드 문서 생성 연동
+- 파일: `frontend/src/App.jsx`
+- 변경 사항:
+  - `handleNewDraft`를 async 함수로 변경.
+  - 로직:
+    - `api.post('/documents', { user_id: user.id })` 호출로 서버에 새 문서 생성 요청.
+    - 응답의 `doc_id`를 현재 `docId`로 설정하고,
+      - `text`는 빈 문자열,
+      - selection/context/recommend 관련 상태는 초기화.
+    - 실패 시에는 기존처럼 로컬에서만 `uuidv4()`로 docId를 생성해 fallback 처리.
+  - 새 문서 생성 직후:
+    - `setLastSnapshotTime(null)`로 저장 상태 초기화.
+    - `setRefreshTrigger((v) => v + 1)` 호출로 Sidebar가 즉시 목록을 다시 불러오도록 트리거.
+
+### 2. Sidebar 문서 목록 표시/하이라이팅 개선
+- 파일: `frontend/src/Sidebar.jsx`
+- 변경 사항:
+  - props에 `selectedDocId` 추가:
+    - 현재 선택된 문서의 `doc_id`를 받아 목록에서 하이라이팅에 사용.
+  - 목록 렌더링:
+    - 라벨 결정:
+      - `label = (doc.preview_text && doc.preview_text.trim()) || '새 문서'`
+      - preview가 비어 있으면 `"새 문서"`를 기본값으로 표시.
+    - 선택된 문서 하이라이트:
+      - `isActive = selectedDocId === doc.doc_id`
+      - 활성 항목에 `bg-purple-50` 같은 배경색 클래스를 적용.
+  - `App.jsx`에서 Sidebar 사용 시:
+    - `selectedDocId={docId}`를 넘겨 현재 열려 있는 문서와 목록의 선택 상태를 동기화.
+
+
+---
+
+## 2025-11-18 – Phase 1.5: Document Snapshot & Management Pipeline
+
+### 1. Frontend – editor_document_snapshot Throttling 및 상태 관리
+- 파일: (에디터/스냅샷 관련) `frontend/src/App.jsx` 및 관련 유틸
+- 주요 로직:
+  - 사용자가 에디터에 입력할 때마다 바로 스냅샷을 쏘지 않고,
+    - **Debounce 2초**: 입력이 멈춘 뒤 2초가 지난 시점,
+    - **Throttle 30초**: 최소 30초 간격으로만 전송,
+    를 만족하는 경우에만 `editor_document_snapshot` 이벤트를 발생.
+  - `lastSnapshotText` 상태를 두어,
+    - 현재 텍스트와 이전에 보낸 스냅샷 텍스트가 동일할 경우에는 이벤트를 보내지 않도록 방어.
+
+### 2. Backend – K 이벤트 Consumer (editor_document_snapshot → full_document_store)
+- 파일: `api/app/consumer.py`
+- 추가 함수: `process_k_events()`
+- 동작:
+  - Kafka 토픽 `editor_document_snapshot` 구독.
+  - 메시지에서 `doc_id`, `full_text`(현재 문서 전체 텍스트), `user_id` 등을 읽어 MongoDB `full_document_store`에 반영.
+  - **Case A – 기존 문서가 존재할 때 (Update)**:
+    - `prev_text = existing.latest_full_text`
+    - `curr_text = payload.full_text`
+    - Diff Stub 계산:
+      - `len_diff = abs(len(curr_text) - len(prev_text))`
+      - `diff_ratio = len_diff / max(len(prev_text), 1)`
+    - `update_one`으로 아래 필드 갱신:
+      - `previous_full_text = prev_text`
+      - `latest_full_text = curr_text`
+      - `diff_ratio`
+      - `last_synced_at` (현재 UTC ISO)
+  - **Case B – 문서가 없을 때 (Insert)**:
+    - `insert_one`으로 새 도큐먼트 생성:
+      - `doc_id`, `user_id`(있을 경우), `latest_full_text = curr_text`
+      - `previous_full_text = None`
+      - `diff_ratio = 1.0`
+      - `created_at`, `last_synced_at` (현재 UTC ISO)
+
+### 3. Backend – 문서 관리용 API (`GET /documents`, `DELETE /documents/{doc_id}`)
+- 파일: `api/app/main.py`
+- `GET /documents`:
+  - 쿼리 파라미터 `user_id`를 받아, MongoDB `sentencify.full_document_store`에서 해당 유저 문서 목록 조회.
+  - `last_synced_at` 내림차순으로 정렬.
+  - 응답 항목:
+    - `doc_id`
+    - `latest_full_text` (에디터 복원용)
+    - `preview_text` (latest_full_text 앞 50자)
+    - `last_synced_at` (ISO 문자열)
+- `DELETE /documents/{doc_id}`:
+  - 쿼리 파라미터 `user_id`와 path `doc_id`를 조건으로 `delete_one`.
+  - 응답: `{ "deleted": <삭제된 문서 개수> }`
+
+### 4. Frontend – Sidebar와 문서 API 연동
+- 파일: `frontend/src/Sidebar.jsx`, `frontend/src/App.jsx`
+- Sidebar:
+  - `userId`를 prop으로 받아 마운트 시 `GET /documents?user_id=...` 호출.
+  - 응답 받은 문서 리스트를 실제 목록으로 렌더링:
+    - `preview_text`를 제목처럼 표시.
+    - 각 항목 우측에 "삭제" 버튼 추가 → `DELETE /documents/{doc_id}?user_id=...` 호출 후 목록 갱신.
+    - 항목 클릭 시 `onSelectDoc({ doc_id, text: latest_full_text })`로 상위(App)에 전달.
+- App:
+  - `handleSelectDocument(doc)` 핸들러 추가:
+    - `doc.doc_id`를 현재 `docId`로 설정.
+    - `doc.text`를 에디터의 `text`로 반영.
+    - 선택/컨텍스트/추천 상태를 초기화하여 새 문서로 전환.
+  - `Sidebar`를 `userId`와 `onSelectDoc`을 넘겨 사용하는 형태로 변경.
