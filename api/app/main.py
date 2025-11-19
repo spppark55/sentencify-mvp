@@ -12,6 +12,8 @@ from kafka import KafkaProducer
 from pydantic import BaseModel
 from .auth import auth_router
 
+from app.qdrant.service import compute_p_vec
+from app.utils.embedding import get_embedding, embedding_service
 
 class RecommendRequest(BaseModel):
     doc_id: str
@@ -60,6 +62,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.on_event("startup")
+async def startup_event():
+    '''임베딩 모델 로딩'''
+    print("Loading embedding model (klue/bert-base)")
+    from app.utils.embedding import embedding_service
+    embedding_service.load_model()
+    print("Embedding model ready!")
 
 LOG_DIR = Path("logs")
 KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
@@ -172,8 +182,15 @@ async def recommend(req: RecommendRequest) -> RecommendResponse:
     context_hash = build_context_hash(req.doc_id, context_full)
 
     p_rule: Dict[str, float] = {"thesis": 0.5, "email": 0.3, "article": 0.2}
-    p_vec: Dict[str, float] = {"thesis": 0.7, "email": 0.2, "article": 0.1}
+    
+    try:
+        embedding = get_embedding(context_full)
+        p_vec = compute_p_vec(embedding, limit = 15)
 
+    except Exception as e :
+        print(f"P_vec calculation failed: {e}")
+        p_vec: Dict[str, float] = {"thesis": 0.7, "email": 0.2, "article": 0.1} 
+        
     final_scores: Dict[str, float] = {}
     for k in set(p_rule) | set(p_vec):
         final_scores[k] = 0.5 * p_rule.get(k, 0.0) + 0.5 * p_vec.get(k, 0.0)
