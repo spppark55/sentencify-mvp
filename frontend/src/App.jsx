@@ -387,7 +387,7 @@ export default function App() {
   };
 
   // 교정 실행
-  const handleRunCorrection = async () => {
+  const handleRunCorrection = async (isRerun = false) => {
     if (!selection.text) {
       alert('먼저 문장을 드래그하여 선택해 주세요.');
       return;
@@ -419,30 +419,37 @@ export default function App() {
       style_request: requestText,
     };
 
-    const started = performance.now();
-    const list = await mockCorrect(payload);
-    const elapsed = Math.round(performance.now() - started);
+    try {
+      const started = performance.now();
+      const list = await mockCorrect(payload);
+      const elapsed = Math.round(performance.now() - started);
 
-    const safeList = Array.isArray(list) ? list : list ? [list] : [];
+      const safeList = Array.isArray(list) ? list : list ? [list] : [];
 
-    // 후보 리스트 상태에 저장 → OptionPanel에서 버튼으로 보여줌
-    setCandidates(safeList);
+      // 후보 리스트 상태에 저장 → OptionPanel에서 버튼으로 보여줌
+      setCandidates(safeList);
 
-    // 후보가 생성된 것에 대한 별도 로그
-    logEvent({
-      event: 'editor_paraphrasing_candidates',
-      recommend_session_id: recommendId,
-      source_recommend_event_id: recommendInsertId,
-      candidate_count: list.length,
-      response_time_ms: elapsed,
-      selected_text: selection.text,
-      selection_start: selection.start,
-      selection_end: selection.end,
-      style_request: requestText,
-      category,
-      language,
-      strength,
-    });
+      // 후보 생성 로그 (재생성 여부 구분)
+      logEvent({
+        event: isRerun
+          ? 'editor_paraphrasing_candidates_rerun'
+          : 'editor_paraphrasing_candidates',
+        recommend_session_id: recommendId,
+        source_recommend_event_id: recommendInsertId,
+        candidate_count: safeList.length,
+        response_time_ms: elapsed,
+        selected_text: selection.text,
+        selection_start: selection.start,
+        selection_end: selection.end,
+        style_request: requestText,
+        category,
+        language,
+        strength,
+      });
+    } catch (err) {
+      console.error('교정 후보 생성 실패:', err);
+      alert('교정 후보를 가져오는 중 문제가 발생했습니다.');
+    }
   };
 
   // 후보 클릭 시 본문 반영하는 핸들러
