@@ -7,14 +7,14 @@ import OptionPanel from './OptionPanel.jsx';
 import { logEvent } from './utils/logger.js';
 import DebugPanel from './DebugPanel.jsx';
 // HEAD의 실제 API 함수들과 Frontend의 Auth/Login 컴포넌트를 모두 가져옴
-import api, { postRecommend, postParaphrase, updateDocument } from './utils/api.js';
+import { createDocument, postRecommend, postParaphrase, updateDocument } from './utils/api.js';
 import { useAuth } from './auth/AuthContext.jsx';
 import Login from './auth/Login.jsx';
 
 const STORAGE_KEY = 'editor:docs:v1'; // Frontend의 키 사용
 
 // 프론트 개발 모드에서 로그인 생략할지 여부
-const DEV_BYPASS_LOGIN = false;
+const DEV_BYPASS_LOGIN = true;
 
 export default function App() {
   // AuthContext 사용 (Frontend)
@@ -23,6 +23,7 @@ export default function App() {
   const effectiveUser = DEV_BYPASS_LOGIN
     ? { id: 'dev-user-001', name: 'Dev User' }
     : user;
+  const userId = effectiveUser?.id ?? null;
 
   // 문서 상태 관리 (Frontend 구조 채택 - 다중 문서 지원)
   const [docs, setDocs] = useState([]);
@@ -130,15 +131,47 @@ export default function App() {
     });
   }, [text, currentId]);
 
+  // useEffect(() => {
+  //   if (!docId || !userId) return;
+
+  //   const handler = setTimeout(async () => {
+  //     try {
+  //       await updateDocument(docId, {
+  //         latest_full_text: text,
+  //         user_id: userId,
+  //       });
+  //     } catch (err) {
+  //       console.warn('자동 저장(updateDocument) 실패', err);
+  //     }
+  //   }, 1200);
+
+  //   return () => clearTimeout(handler);
+  // }, [text, docId, userId]);
+  
+
   // 새 문서 (Frontend)
-  const handleNewDraft = () => {
-    const id = uuidv4();
-    const newDoc = { id, title: '새 문서', text: '', updatedAt: new Date().toISOString() };
-    setDocs((prev) => [newDoc, ...prev]);
-    setCurrentId(id);
-    setDocId(id);
-    setText('');
-    resetSelectionState();
+  const handleNewDraft = async () => {
+    if (!userId) {
+      alert('사용자 정보를 확인할 수 없어 새 문서를 만들 수 없습니다.');
+      return;
+    }
+
+    try {
+      const res = await createDocument({ user_id: userId });
+      const id = res?.doc_id;
+      if (!id) {
+        throw new Error('서버에서 doc_id를 받지 못했습니다.');
+      }
+      const newDoc = { id, title: '새 문서', text: '', updatedAt: new Date().toISOString() };
+      setDocs((prev) => [newDoc, ...prev]);
+      setCurrentId(id);
+      setDocId(id);
+      setText('');
+      resetSelectionState();
+    } catch (err) {
+      console.error('서버 문서 생성 실패', err);
+      alert('새 문서를 생성하지 못했습니다. 잠시 후 다시 시도해 주세요.');
+    }
   };
 
   // 문서 선택 (Frontend)
@@ -235,12 +268,18 @@ export default function App() {
       return;
     }
 
+    if (!docId || !userId) {
+      console.warn('추천 API 호출 불가: docId 또는 userId 없음');
+      alert('문서 또는 사용자 정보가 없어 추천을 실행할 수 없습니다.');
+      return;
+    }
+
     const intensityMap = ['weak', 'moderate', 'strong'];
     const intensityLabel = typeof strength === 'number' ? intensityMap[strength] || 'moderate' : 'moderate';
 
     const payload = {
       doc_id: docId,
-      user_id: effectiveUser?.id ?? 'anonymous',
+      user_id: userId,
       selected_text: sel.text,
       context_prev: ctx.prev || null,
       context_next: ctx.next || null,
@@ -273,6 +312,7 @@ export default function App() {
       });
     } catch (err) {
       console.error('Failed to call /recommend', err);
+      alert('추천 API 호출에 실패했습니다. 잠시 후 다시 시도해 주세요.');
     }
   };
 
@@ -283,12 +323,18 @@ export default function App() {
       return;
     }
 
+    if (!docId || !userId) {
+      console.warn('교정 API 호출 불가: docId 또는 userId 없음');
+      alert('문서 또는 사용자 정보를 확인한 뒤 다시 시도해 주세요.');
+      return;
+    }
+
     const intensityMap = ['weak', 'moderate', 'strong'];
     const intensityLabel = intensityMap[strength] || 'moderate';
 
     const payload = {
       doc_id: docId,
-      user_id: effectiveUser?.id ?? 'anonymous',
+      user_id: userId,
       selected_text: selection.text,
       context_prev: context.prev || null,
       context_next: context.next || null,

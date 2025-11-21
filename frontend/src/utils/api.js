@@ -14,6 +14,11 @@ export async function postParaphrase(payload) {
   return data;
 }
 
+export async function createDocument(payload) {
+  const { data } = await api.post('/documents', payload);
+  return data;
+}
+
 export async function updateDocument(docId, payload) {
   const { data } = await api.patch(`/documents/${docId}`, payload);
   return data;
