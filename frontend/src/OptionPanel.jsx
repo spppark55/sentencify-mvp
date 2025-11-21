@@ -20,6 +20,8 @@ export default function OptionPanel({
   const [showStrengthTooltip, setShowStrengthTooltip] = useState(false); // 슬라이더 위 작은 말풍선
   const [isRunning, setIsRunning] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const isBusy = isRunning || isRefreshing;
+
 
   const strengthLabelMap = {
     0: '1단계 : 맞춤법 교정',
@@ -60,7 +62,7 @@ export default function OptionPanel({
 
   // 실행 버튼 클릭 핸들러
   const handleClickRun = async () => {
-    if (!selectedText || isRuunning) return;
+    if (!selectedText || isRunning) return;
 
     setIsRunning(true);
     try {

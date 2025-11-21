@@ -10,15 +10,23 @@ import { mockCorrect } from './utils/mockCorrect.js';
 import DebugPanel from './DebugPanel.jsx';
 import { postRecommend } from './utils/api.js';
 
-// ✅ 추가: AuthContext & Login 불러오기
+// AuthContext & Login 불러오기
 import { useAuth } from './auth/AuthContext.jsx';
 import Login from './auth/Login.jsx';
 
 const STORAGE_KEY = 'editor:docs:v1'; // 🔹 여러 문서를 한 번에 저장하는 키
 
+// 프론트 개발 모드에서 로그인 생략할지 여부(서버와 통합 시, false로 변경)
+const DEV_BYPASS_LOGIN = false; 
+
 export default function App() {
-  // ✅ 임시 유저 제거하고, AuthContext에서 user / logout 사용
+  // AuthContext에서 user / logout 사용
   const { user, logout } = useAuth();
+
+   // 프론트 개발용 mock 유저
+  const effectiveUser = DEV_BYPASS_LOGIN
+    ? { id: 'dev-user-001', name: 'Dev User' }
+    : user;
 
   // 🔹 문서 리스트 & 현재 문서 id
   const [docs, setDocs] = useState([]); // [{ id, title, text, updatedAt }, ...]
@@ -335,7 +343,7 @@ export default function App() {
 
     const payload = {
       doc_id: docId,
-      user_id: user?.id ?? 'anonymous', // ✅ AuthContext에서 받은 user
+      user_id: effectiveUser?.id ?? 'anonymous', // ✅ AuthContext에서 받은 user
       selected_text: sel.text,
       context_prev: ctx.prev || null,
       context_next: ctx.next || null,
@@ -363,7 +371,7 @@ export default function App() {
 
       logEvent({
         event: 'editor_recommend_options',
-        user_id: user?.id,
+        user_id: effectiveUser?.id,
         doc_id: docId,
         selected_text: sel.text,
         selection_start: sel.start,
@@ -409,7 +417,7 @@ export default function App() {
     });
 
     const payload = {
-      user_id: user?.id,
+      user_id: effectiveUser?.id,
       doc_id: docId,
       selected_text: selection.text,
       context,
@@ -492,7 +500,7 @@ export default function App() {
     logEvent({
       event: 'correction_history',
       history_id: uuidv4(),
-      user_id: user?.id,
+      user_id: effectiveUser?.id,
       doc_id: docId,
       original_text: selection.text,
       selected_text: candidate,
@@ -504,7 +512,7 @@ export default function App() {
   };
 
   // ✅ 여기서 "로그인 여부"에 따라 다른 화면 렌더링
-  if (!user) {
+  if (!effectiveUser) {
     // 로그인 안 된 상태 → 로그인 페이지부터 시작
     return (
       <div className="h-screen flex">
