@@ -9,5 +9,15 @@ export async function postRecommend(payload) {
   return data;
 }
 
+export async function postParaphrase(payload) {
+  const { data } = await api.post('/paraphrase', payload);
+  return data;
+}
+
+export async function updateDocument(docId, payload) {
+  const { data } = await api.patch(`/documents/${docId}`, payload);
+  return data;
+}
+
 export default api;
 

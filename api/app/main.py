@@ -2,7 +2,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 import uuid
 from datetime import datetime, timezone
 
@@ -11,10 +11,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from kafka import KafkaProducer
 from pydantic import BaseModel
 from pymongo import MongoClient
+from dotenv import load_dotenv
+import google.generativeai as genai
 from .auth import auth_router
 
+from app.prompts import build_paraphrase_prompt
 from app.qdrant.service import compute_p_vec
 from app.utils.embedding import get_embedding, embedding_service
+
+load_dotenv()
 
 class RecommendRequest(BaseModel):
     doc_id: str
@@ -47,6 +52,27 @@ class RecommendResponse(BaseModel):
     embedding_version: str
 
 
+class ParaphraseRequest(BaseModel):
+    doc_id: str
+    user_id: str
+    selected_text: str
+    context_prev: Optional[str] = None
+    context_next: Optional[str] = None
+    category: Optional[str] = "general"
+    language: Optional[str] = "ko"
+    intensity: Optional[str] = "moderate"
+    style_request: Optional[str] = None
+    recommend_session_id: Optional[str] = None
+    source_recommend_event_id: Optional[str] = None
+
+
+class ParaphraseResponse(BaseModel):
+    candidates: List[str]
+
+
+
+
+
 class LogRequest(BaseModel):
     event: str
 
@@ -55,6 +81,11 @@ class LogRequest(BaseModel):
 
 
 class CreateDocumentRequest(BaseModel):
+    user_id: str
+
+
+class UpdateDocumentRequest(BaseModel):
+    latest_full_text: str
     user_id: str
 
 
@@ -81,6 +112,12 @@ KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
 KAFKA_ENABLED = os.getenv("KAFKA_ENABLED", "true").lower() != "false"
 MONGO_URI = os.getenv("MONGO_URI", "mongodb://mongo:27017")
 MONGO_DB_NAME = os.getenv("MONGO_DB_NAME", "sentencify")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+if GEMINI_API_KEY:
+    print("[Gemini] API key loaded from environment.")
+    genai.configure(api_key=GEMINI_API_KEY)
+else:
+    print("[Gemini] API key not found; paraphrase endpoint will use fallbacks.")
 
 _kafka_producer: KafkaProducer | None = None
 _mongo_client: MongoClient | None = None
@@ -138,6 +175,25 @@ def build_context_full(prev: Optional[str], selected: str, next_: Optional[str])
 def build_context_hash(doc_id: str, context_full: str) -> str:
     payload = f"{doc_id}:{context_full}"
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _fallback_candidates(selected_text: str) -> List[str]:
+    text = selected_text or ""
+    return [text, text, text]
+
+
+def _clean_candidates(raw_text: str, fallback: str) -> List[str]:
+    cleaned: List[str] = []
+    for line in raw_text.splitlines():
+        candidate = line.strip()
+        if not candidate:
+            continue
+        candidate = candidate.lstrip("0123456789.-•) ").strip()
+        if candidate:
+            cleaned.append(candidate)
+    while len(cleaned) < 3:
+        cleaned.append(fallback)
+    return cleaned[:3]
 
 
 def append_jsonl(filename: str, payload: Dict) -> None:
@@ -322,6 +378,58 @@ async def recommend(req: RecommendRequest) -> RecommendResponse:
     )
 
 
+@app.post("/paraphrase", response_model=ParaphraseResponse)
+async def paraphrase(req: ParaphraseRequest) -> ParaphraseResponse:
+    fallback_text = req.selected_text or ""
+    fallback_candidates = _fallback_candidates(fallback_text)
+    category = req.category or "general"
+    language = req.language or "ko"
+    intensity = req.intensity or "moderate"
+    event_id = str(uuid.uuid4())
+
+    b_event = {
+        "event": "editor_run_paraphrasing",
+        "event_id": event_id,
+        "source_recommend_event_id": req.source_recommend_event_id,
+        "recommend_session_id": req.recommend_session_id,
+        "doc_id": req.doc_id,
+        "user_id": req.user_id,
+        "selected_text": req.selected_text,
+        "context_prev": req.context_prev,
+        "context_next": req.context_next,
+        "target_category": category,
+        "target_language": language,
+        "target_intensity": intensity,
+        "style_request": req.style_request,
+        "created_at": _now_iso(),
+        "paraphrase_llm_version": "gemini-2.5-flash",
+    }
+    produce_b_event(b_event)
+
+    if not GEMINI_API_KEY:
+        print("GEMINI_API_KEY is not configured. Returning fallback candidates.")
+        return ParaphraseResponse(candidates=fallback_candidates)
+
+    try:
+        model = genai.GenerativeModel("gemini-2.5-flash")
+        prompt = build_paraphrase_prompt(
+            selected_text=req.selected_text,
+            category=category,
+            intensity=intensity,
+            language=language,
+            style_request=req.style_request,
+            context_prev=req.context_prev,
+            context_next=req.context_next,
+        )
+        response = await model.generate_content_async(prompt)
+        raw_text = getattr(response, "text", "") or ""
+        candidates = _clean_candidates(raw_text, fallback_text)
+        return ParaphraseResponse(candidates=candidates)
+    except Exception as exc:
+        print(f"[Gemini] Error during generate_content_async: {exc}")
+        return ParaphraseResponse(candidates=fallback_candidates)
+
+
 @app.post("/log")
 async def log_event(req: LogRequest) -> Dict[str, Any]:
     payload: Dict[str, Any] = req.model_dump()
@@ -440,3 +548,39 @@ async def create_document(req: CreateDocumentRequest) -> Dict[str, Any]:
     collection.insert_one(doc)
 
     return {"doc_id": doc_id, "created_at": now}
+
+
+@app.patch("/documents/{doc_id}")
+async def update_document(doc_id: str, req: UpdateDocumentRequest) -> Dict[str, Any]:
+    if not req.user_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="user_id is required",
+        )
+
+    collection = get_mongo_collection("full_document_store")
+    existing = collection.find_one({"doc_id": doc_id, "user_id": req.user_id})
+    if not existing:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="document not found",
+        )
+    prev_text = existing.get("latest_full_text") or ""
+    curr_text = req.latest_full_text or ""
+    len_prev = len(prev_text)
+    len_curr = len(curr_text)
+    denominator = max(len_prev, 1)
+    diff_ratio = abs(len_curr - len_prev) / denominator
+    now = _now_iso()
+    collection.update_one(
+        {"_id": existing["_id"]},
+        {
+            "$set": {
+                "latest_full_text": curr_text,
+                "previous_full_text": prev_text,
+                "diff_ratio": diff_ratio,
+                "last_synced_at": now,
+            }
+        },
+    )
+    return {"doc_id": doc_id, "status": "updated"}

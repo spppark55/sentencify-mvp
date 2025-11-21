@@ -5,9 +5,8 @@ import Sidebar from './Sidebar.jsx';
 import Editor from './Editor.jsx';
 import OptionPanel from './OptionPanel.jsx';
 import { logEvent } from './utils/logger.js';
-import { mockCorrect } from './utils/mockCorrect.js';
 import DebugPanel from './DebugPanel.jsx';
-import api, { postRecommend } from './utils/api.js';
+import api, { postRecommend, postParaphrase, updateDocument } from './utils/api.js';
 
 const STORAGE_KEY = 'editor:draft:v1';
 
@@ -47,21 +46,28 @@ export default function App() {
 
   // 자동 저장
   useEffect(() => {
+    if (!docId || !user?.id) return;
     setIsSaving(true);
     const t = setTimeout(() => {
-      try {
-        localStorage.setItem(STORAGE_KEY, text);
-        const now = Date.now();
-        setLastSnapshotTime(now);
-        setRefreshTrigger((v) => v + 1);
-      } catch {
-        // ignore
-      } finally {
-        setIsSaving(false);
-      }
+      (async () => {
+        try {
+          localStorage.setItem(STORAGE_KEY, text);
+          const now = Date.now();
+          setLastSnapshotTime(now);
+          await updateDocument(docId, {
+            user_id: user.id,
+            latest_full_text: text,
+          });
+          console.log('Saved to DB.');
+        } catch (err) {
+          console.error('Auto-save failed', err);
+        } finally {
+          setIsSaving(false);
+        }
+      })();
     }, 400);
     return () => clearTimeout(t);
-  }, [text]);
+  }, [text, docId, user?.id]);
 
   // 초기 복원
   useEffect(() => {
@@ -106,6 +112,7 @@ export default function App() {
       setContextHash(null);
       setCandidates([]);
       setLastSnapshotTime(null);
+      setRefreshTrigger((v) => v + 1);
       try {
         localStorage.removeItem(STORAGE_KEY);
       } catch {}
@@ -213,11 +220,12 @@ export default function App() {
 
       setRecommendId(res.recommend_session_id);
       setRecommendInsertId(res.insert_id);
-      setRecoOptions(res.reco_options || []);
+      const recoList = res.reco_options || [];
+      setRecoOptions(recoList);
       setContextHash(res.context_hash || null);
 
-      const topOption = res.reco_options?.[0];
-      if (topOption?.category && optEnabled.category) {
+      const topOption = recoList[0];
+      if (topOption?.category) {
         setCategory(topOption.category);
       }
       if (topOption?.language && optEnabled.language) {
@@ -252,64 +260,46 @@ export default function App() {
   // 교정 실행
   const handleRunCorrection = async () => {
     if (!selection.text) {
-      alert('먼저 문장을 드래그하여 선택해 주세요.');
+      alert('?? ??? ????? ??? ???.');
       return;
     }
 
-    // 교정 직후
-    logEvent({
-      event: 'editor_run_paraphrasing',
-      recommend_session_id: recommendId,
-      source_recommend_event_id: recommendInsertId,
-      reco_category: category,
-      recommend_phase: 'phase1.5',
-      cache_hit: false,
-      response_time_ms: 0,
-      llm_name: 'mock-gpt',
-      selected_text: selection.text,
-      selection_start: selection.start,
-      selection_end: selection.end,
-    });
+    const intensityMap = ['weak', 'moderate', 'strong'];
+    const intensityLabel = intensityMap[strength] || 'moderate';
 
     const payload = {
-      user_id: user?.id,
       doc_id: docId,
+      user_id: user?.id ?? 'anonymous',
       selected_text: selection.text,
-      context,
-      category: optEnabled.category ? category : undefined,
-      language: optEnabled.language ? language : undefined,
-      strength: optEnabled.strength ? strength : undefined,
-      style_request: requestText,
-    };
-
-    const started = performance.now();
-    const list = await mockCorrect(payload);
-    const elapsed = Math.round(performance.now() - started);
-
-    const safeList = Array.isArray(list) ? list : list ? [list] : [];
-
-    // ✅ 후보 리스트 상태에 저장 → OptionPanel에서 버튼으로 보여줌
-    setCandidates(safeList);
-
-    // 후보가 생성된 것에 대한 별도 로그 남기고 싶으면 여기서
-    logEvent({
-      event: 'editor_paraphrasing_candidates',
+      context_prev: context.prev || null,
+      context_next: context.next || null,
+      category: optEnabled.category && category !== 'none' ? category : 'general',
+      language: optEnabled.language ? language : 'ko',
+      intensity: optEnabled.strength ? intensityLabel : 'moderate',
+      style_request: requestText || null,
       recommend_session_id: recommendId,
       source_recommend_event_id: recommendInsertId,
-      candidate_count: list.length,
-      response_time_ms: elapsed,
-      selected_text: selection.text,
-      selection_start: selection.start,
-      selection_end: selection.end,
-      style_request: requestText,
-      category,
-      language,
-      strength,
-    });
+    };
 
+    try {
+      const started = performance.now();
+      const result = await postParaphrase(payload);
+      const elapsed = Math.round(performance.now() - started);
+
+      const apiList = Array.isArray(result?.candidates) ? result.candidates : [];
+      const list = apiList.length > 0
+        ? apiList
+        : [selection.text, selection.text, selection.text];
+      setCandidates(list);
+
+    } catch (err) {
+      console.error('Failed to call /paraphrase', err);
+      alert('?? ?? ? ??? ??????.');
+    }
   };
 
-  // 후보 클릭 시 본문 반영하는 핸들러
+  // ?? ?? ? ?? ???? ???
+
   const handleApplyCandidate = (candidate, index) => {
     if (!selection.text) {
       // 이론상 실행 직후에는 selection이 살아있어야 하지만,
