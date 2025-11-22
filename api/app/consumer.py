@@ -4,6 +4,7 @@ import threading
 import time
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional
+from uuid import uuid4
 
 from kafka import KafkaConsumer
 from pymongo import MongoClient
@@ -99,6 +100,27 @@ class SmartRouter:
         }
         self.full_document_store = self.db["full_document_store"]
 
+    def _with_base_defaults(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        now_seconds = int(time.time())
+        enriched = dict(payload)
+        if not enriched.get("distinct_id"):
+            fallback = (
+                payload.get("user_id")
+                or payload.get("device_id")
+                or payload.get("doc_id")
+                or "anonymous"
+            )
+            enriched["distinct_id"] = str(fallback)
+        insert_source = (
+            enriched.get("insert_id") or payload.get("event_id") or str(uuid4())
+        )
+        enriched["insert_id"] = str(insert_source)
+        if not enriched.get("time"):
+            enriched["time"] = now_seconds
+        if "mp_api_timestamp_ms" not in enriched or enriched["mp_api_timestamp_ms"] is None:
+            enriched["mp_api_timestamp_ms"] = int(now_seconds * 1000)
+        return enriched
+
     def handle_payload(self, payload: Dict[str, Any]) -> None:
         event = payload.get("event")
         if event == "editor_run_paraphrasing":
@@ -117,32 +139,60 @@ class SmartRouter:
             processor.flush(force=True)
 
     def _handle_run(self, payload: Dict[str, Any]) -> None:
-        run_doc = CorporateRunLog(**payload)
-        log_b_data = dict(payload)
-        log_b_data.setdefault("source_recommend_event_id", payload.get("source_recommend_event_id"))
-        log_b_data.setdefault("recommend_session_id", payload.get("recommend_session_id"))
+        enriched = self._with_base_defaults(payload)
+        enriched.setdefault("llm_name", payload.get("paraphrase_llm_version"))
+        enriched.setdefault("maintenance", payload.get("maintenance") or payload.get("target_intensity"))
+        enriched.setdefault("field", payload.get("field") or payload.get("target_category"))
+        enriched.setdefault(
+            "target_language",
+            payload.get("target_language") or payload.get("language"),
+        )
+        if enriched.get("input_sentence_length") is None:
+            enriched["input_sentence_length"] = len((payload.get("selected_text") or ""))
+        enriched.setdefault("platform", payload.get("platform") or "web")
+        enriched.setdefault("trigger", payload.get("trigger") or "editor_run_paraphrasing")
+        if payload.get("response_time_ms") is not None:
+            enriched["response_time_ms"] = payload.get("response_time_ms")
+        log_b_data = dict(enriched)
+        log_b_data["source_recommend_event_id"] = payload.get("source_recommend_event_id")
+        log_b_data["recommend_session_id"] = payload.get("recommend_session_id")
+        run_doc = CorporateRunLog(**enriched)
         log_b = LogB(**log_b_data)
         self.batchers["corporate_run_logs"].add(run_doc)
         self.batchers["log_b_run"].add(log_b)
 
     def _handle_select(self, payload: Dict[str, Any]) -> None:
-        select_doc = CorporateSelectLog(**payload)
-        log_c_data = dict(payload)
-        log_c_data.setdefault("source_recommend_event_id", payload.get("source_recommend_event_id"))
-        log_c_data.setdefault("recommend_session_id", payload.get("recommend_session_id"))
+        enriched = self._with_base_defaults(payload)
+        enriched.setdefault("maintenance", payload.get("maintenance") or payload.get("final_strength"))
+        enriched.setdefault("field", payload.get("field") or payload.get("final_category"))
+        enriched.setdefault(
+            "target_language",
+            payload.get("target_language") or payload.get("final_language"),
+        )
+        log_c_data = dict(enriched)
+        log_c_data["source_recommend_event_id"] = payload.get("source_recommend_event_id")
+        log_c_data["recommend_session_id"] = payload.get("recommend_session_id")
+        log_c_data["was_accepted"] = payload.get("was_accepted")
+        select_doc = CorporateSelectLog(**enriched)
         log_c = LogC(**log_c_data)
         self.batchers["corporate_select_logs"].add(select_doc)
         self.batchers["log_c_select"].add(log_c)
 
         if payload.get("was_accepted"):
+            outputs = (
+                payload.get("output_sentences")
+                or payload.get("paraphrasing_candidates")
+                or ([payload.get("selected_candidate_text")] if payload.get("selected_candidate_text") else [])
+            )
             correction = CorrectionHistory(
                 user=payload.get("user_id"),
-                field=payload.get("field"),
-                intensity=payload.get("maintenance"),
+                field=enriched.get("field"),
+                intensity=enriched.get("maintenance"),
                 user_prompt=payload.get("user_prompt"),
-                input_sentence=payload.get("selected_text")
-                or payload.get("input_sentence"),
-                output_sentences=payload.get("paraphrasing_candidates") or [],
+                input_sentence=payload.get("input_sentence")
+                or payload.get("original_text")
+                or payload.get("selected_text"),
+                output_sentences=outputs,
                 selected_index=payload.get("index"),
             )
             self.batchers["correction_history"].add(correction)
@@ -183,27 +233,33 @@ class SmartRouter:
             len_curr = len(full_text)
             diff_ratio = abs(len_curr - len_prev) / max(len_prev, 1)
             self.full_document_store.update_one(
-                {"_id": existing["_id"]},
+                {"doc_id": doc_id},
                 {
                     "$set": {
                         "previous_full_text": prev_text,
                         "latest_full_text": full_text,
                         "diff_ratio": diff_ratio,
+                        "user_id": user_id or existing.get("user_id"),
                         "last_synced_at": now,
                     }
                 },
+                upsert=True,
             )
         else:
-            self.full_document_store.insert_one(
+            self.full_document_store.update_one(
+                {"doc_id": doc_id},
                 {
-                    "doc_id": doc_id,
-                    "user_id": user_id,
-                    "latest_full_text": full_text,
-                    "previous_full_text": None,
-                    "diff_ratio": 1.0,
-                    "created_at": now,
-                    "last_synced_at": now,
-                }
+                    "$set": {
+                        "doc_id": doc_id,
+                        "user_id": user_id,
+                        "latest_full_text": full_text,
+                        "previous_full_text": None,
+                        "diff_ratio": 1.0,
+                        "created_at": now,
+                        "last_synced_at": now,
+                    }
+                },
+                upsert=True,
             )
 
 

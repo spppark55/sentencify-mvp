@@ -5,12 +5,14 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
+from app.schemas.corporate import BaseCorporateEvent
+
 
 class LogA(BaseModel):
     insert_id: Optional[str] = None
     recommend_session_id: Optional[str] = None
-    user_id: Optional[str] = None
     doc_id: Optional[str] = None
+    user_id: Optional[str] = None
     reco_options: List[Dict[str, Any]] = Field(default_factory=list)
     P_vec: Dict[str, float] = Field(default_factory=dict)
     P_doc: Dict[str, float] = Field(default_factory=dict)
@@ -19,15 +21,7 @@ class LogA(BaseModel):
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
-class LogB(BaseModel):
-    distinct_id: Optional[str] = None
-    device_id: Optional[str] = None
-    user_id: Optional[str] = None
-    insert_id: Optional[str] = None
-    time: Optional[int] = None
-    browser: Optional[str] = None
-    os: Optional[str] = None
-    current_url: Optional[str] = None
+class LogB(BaseCorporateEvent):
     llm_name: Optional[str] = None
     llm_provider: Optional[str] = None
     maintenance: Optional[str] = None
@@ -43,12 +37,7 @@ class LogB(BaseModel):
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
-class LogC(BaseModel):
-    distinct_id: Optional[str] = None
-    device_id: Optional[str] = None
-    user_id: Optional[str] = None
-    insert_id: Optional[str] = None
-    time: Optional[int] = None
+class LogC(BaseCorporateEvent):
     maintenance: Optional[str] = None
     field: Optional[str] = None
     target_language: Optional[str] = None

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import List, Optional
+from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
@@ -10,15 +11,22 @@ def _now_unix_ms() -> int:
     return int(datetime.utcnow().timestamp() * 1000)
 
 
+def _now_unix_seconds() -> int:
+    return int(datetime.utcnow().timestamp())
+
+
 class BaseCorporateEvent(BaseModel):
-    distinct_id: Optional[str] = None
+    distinct_id: str = Field(default="anonymous")
     device_id: Optional[str] = None
     user_id: Optional[str] = None
-    insert_id: Optional[str] = None
-    time: int = Field(default_factory=_now_unix_ms)
+    insert_id: str = Field(default_factory=lambda: str(uuid4()))
+    time: int = Field(default_factory=_now_unix_seconds)
+    mp_api_timestamp_ms: Optional[int] = Field(default_factory=_now_unix_ms)
     browser: Optional[str] = None
     os: Optional[str] = None
     current_url: Optional[str] = None
+    referrer: Optional[str] = None
+    mp_country_code: Optional[str] = None
 
 
 class CorporateRunLog(BaseCorporateEvent):
