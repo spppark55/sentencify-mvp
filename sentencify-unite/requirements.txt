@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+pydantic
+kafka-python
+redis
+qdrant-client
+tenaciy
+httpx
