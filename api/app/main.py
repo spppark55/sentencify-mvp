@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import traceback
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 import uuid
@@ -280,11 +281,26 @@ async def recommend(req: RecommendRequest) -> RecommendResponse:
 
     context_full = build_context_full(req.context_prev, req.selected_text, req.context_next)
     context_hash = build_context_hash(req.doc_id, context_full)
+    print(
+        "[TRACE][recommend] incoming request",
+        {
+            "doc_id": req.doc_id,
+            "user_id": req.user_id,
+            "selected_len": len(req.selected_text or ""),
+            "context_prev_len": len(req.context_prev or ""),
+            "context_next_len": len(req.context_next or ""),
+            "field": req.field,
+            "language": req.language,
+        },
+        flush=True,
+    )
     try:
         macro_context = await get_macro_context(req.doc_id)
     except Exception as exc:
         print(f"[Redis] Failed to load macro context: {exc}", flush=True)
+        traceback.print_exc()
         macro_context = None
+    print(f"[TRACE][recommend] macro_context={macro_context}", flush=True)
 
     p_rule: Dict[str, float] = {"thesis": 0.5, "email": 0.3, "article": 0.2}
 
@@ -299,8 +315,10 @@ async def recommend(req: RecommendRequest) -> RecommendResponse:
         )
         p_vec = compute_p_vec(embedding, limit=15)
         print(f"[DEBUG] 4. Final P_vec Result: {p_vec}\n", flush=True)
+        print(f"[TRACE][recommend] P_vec_keys={list(p_vec.keys())}", flush=True)
     except Exception as e:
         print(f"[ERROR] P_vec calculation failed: {e}", flush=True)
+        traceback.print_exc()
         p_vec = {"thesis": 0.7, "email": 0.2, "article": 0.1}
 
     p_doc: Dict[str, float] = {}
@@ -311,6 +329,10 @@ async def recommend(req: RecommendRequest) -> RecommendResponse:
     doc_length = len(doc_text_for_len)
     doc_maturity = calculate_maturity_score(doc_length)
     alpha = calculate_alpha(doc_maturity)
+    print(
+        f"[TRACE][recommend] doc_length={doc_length} maturity={doc_maturity:.4f} alpha={alpha:.4f}",
+        flush=True,
+    )
 
     score_categories = set(p_vec) | set(p_doc)
     if not score_categories:
@@ -331,6 +353,11 @@ async def recommend(req: RecommendRequest) -> RecommendResponse:
             intensity=intensity,
         )
     ]
+    print(
+        "[TRACE][recommend] final reco_options",
+        [opt.model_dump() for opt in reco_options],
+        flush=True,
+    )
 
     model_version = "phase1_stub_v1"
     api_version = "v1"

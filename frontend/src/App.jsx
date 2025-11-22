@@ -347,6 +347,10 @@ export default function App() {
 
     const intensityMap = ['weak', 'moderate', 'strong'];
     const intensityLabel = intensityMap[strength] || 'moderate';
+    const resolvedCategory =
+      optEnabled.category && category !== 'none' ? category : 'general';
+    const resolvedLanguage = optEnabled.language ? language : 'ko';
+    const resolvedMaintenance = optEnabled.strength ? intensityLabel : 'moderate';
 
     const payload = {
       doc_id: docId,
@@ -354,9 +358,9 @@ export default function App() {
       selected_text: selection.text,
       context_prev: context.prev || null,
       context_next: context.next || null,
-      category: optEnabled.category && category !== 'none' ? category : 'general',
-      language: optEnabled.language ? language : 'ko',
-      intensity: optEnabled.strength ? intensityLabel : 'moderate',
+      category: resolvedCategory,
+      language: resolvedLanguage,
+      intensity: resolvedMaintenance,
       style_request: requestText || null,
       recommend_session_id: recommendId,
       source_recommend_event_id: recommendInsertId,
@@ -374,10 +378,22 @@ export default function App() {
       setCandidates(list);
 
       logEvent({
-        event: isRerun ? 'editor_paraphrasing_candidates_rerun' : 'editor_paraphrasing_candidates',
+        event: 'editor_run_paraphrasing',
+        doc_id: docId,
+        user_id: effectiveUser?.id,
         recommend_session_id: recommendId,
-        candidate_count: list.length,
+        source_recommend_event_id: recommendInsertId,
+        input_sentence_length: selection.text.length,
+        maintenance: resolvedMaintenance,
+        target_language: resolvedLanguage,
+        field: resolvedCategory,
+        tone: 'normal',
+        platform: 'web',
+        trigger: isRerun ? 'rerun_click' : 'button_click',
+        llm_name: 'gemini-2.5-flash',
+        llm_provider: 'google',
         response_time_ms: elapsed,
+        candidate_count: list.length,
       });
 
     } catch (err) {
@@ -392,6 +408,16 @@ export default function App() {
       return;
     }
 
+    const totalCandidates = candidates.length || 1;
+    const intensityMap = ['weak', 'moderate', 'strong'];
+    const resolvedMaintenance =
+      optEnabled.strength ? intensityMap[strength] || 'moderate' : 'moderate';
+    const resolvedCategory =
+      optEnabled.category && category !== 'none' ? category : 'general';
+    const resolvedLanguage = optEnabled.language ? language : 'ko';
+    const selectedSentenceId = uuidv4();
+    const originalText = selection.text;
+
     const before = text.slice(0, selection.start);
     const after = text.slice(selection.end);
     const newText = before + candidate + after;
@@ -402,9 +428,17 @@ export default function App() {
 
     logEvent({
       event: 'editor_selected_paraphrasing',
+      doc_id: docId,
+      user_id: effectiveUser?.id,
       recommend_session_id: recommendId,
       source_recommend_event_id: recommendInsertId,
+      index: typeof index === 'number' ? index : 0,
       was_accepted: true,
+      selected_sentence_id: selectedSentenceId,
+      total_paraphrasing_sentence_count: totalCandidates,
+      maintenance: resolvedMaintenance,
+      field: resolvedCategory,
+      target_language: resolvedLanguage,
       selected_candidate_text: candidate,
       final_category: category,
     });
@@ -414,7 +448,7 @@ export default function App() {
       history_id: uuidv4(),
       user_id: effectiveUser?.id,
       doc_id: docId,
-      original_text: selection.text,
+      original_text: originalText,
       selected_text: candidate,
       created_at: new Date().toISOString(),
     });
