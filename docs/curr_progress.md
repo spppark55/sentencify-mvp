@@ -5,6 +5,19 @@
 
 ---
 
+## 2025-11-22 – Phase 1.5 Step2 (Diff Gatekeeper) 진행 중
+
+### 1. Step 2. Diff Ratio Calculation Logic (In Progress)
+- Schema K(`FullDocumentStore`, `api/app/schemas/document.py`) 정의: `blocks`, `latest_full_text`, `previous_full_text`, `diff_ratio`, `last_synced_at`, `schema_version` 등 v2.3 필드 정리.
+- Diff 계산 유틸(`api/app/utils/diff.py`) 추가: `calculate_diff_ratio(prev, curr)`가 Levenshtein 거리를 `max(len(prev), 1)`로 정규화하여 0~1 범위 비율을 반환.
+- 의존성: `api/requirements.txt`에 `python-Levenshtein` 추가.
+
+### 2. Standalone 테스트
+- 파일: `scripts/test_step2_diff.py`
+  - `prev="Hello", curr="Hello"` 등 3개 시나리오를 통해 diff ratio가 기대값을 만족하는지 검증. 성공 시 "✅ Step 2 Diff Logic Passed" 출력.
+
+---
+
 ## 2025-11-19 – Phase 1.5 Step1 (Redis Schema F) 완료
 
 ### 1. Step 1. Redis Infrastructure & Schema F ✅
