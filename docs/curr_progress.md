@@ -5,19 +5,19 @@
 
 ---
 
-## 2025-11-23 – Phase 2 Step2 (Training ETL) 진행 중
+## 2025-11-23 – Phase 2 Step4 (Vector Migration) 진행 중
 
-### 1. Step 1 완료 요약
-- Enterprise/Analytics 스키마 정의(`api/app/schemas/corporate.py`, `api/app/schemas/logs.py`) 및 Smart Consumer Router + Batching(`api/app/consumer.py`) 구현.
-- `scripts/phase2_test_step1_consumer.py`로 Router/Batching 플로우 검증 완료.
+### 1. Step 3. User Profile Service ✅
+- Schema G 정의(`api/app/schemas/profile.py`) 및 Profile 업서트 로직(`api/app/services/profile_service.py`) 완성.
+- Standalone 테스트(`scripts/phase2_test_step3_profile.py`)로 recommend_accept_rate 및 vector 정규화 검증 → "✅ Phase 2 Step 3 Profile Service Test Passed".
 
-### 2. Step 2. Training ETL Pipeline (In Progress)
-- Schema H 정의(`api/app/schemas/training.py`): `TrainingExample` 필드(예제 ID, 세션 ID, consistency flag, embedding, macro hint, 스코어 등) 명시.
-- ETL 서비스(`api/app/services/etl_service.py`):
-  - `run_etl_pipeline()`에서 `log_c_select` 중심 `$lookup` (A/B/D/E/F) 후 Python consistency 체크(`±5s` 기준)와 `training_examples` upsert.
-- Standalone 테스트(`scripts/phase2_test_step2_etl.py`):
-  - Mock Mongo aggregate 결과를 기반으로 Trainer upsert 및 consistency flag=high 여부 검증 → "✅ Phase 2 Step 2 ETL Service Test Passed".
-- 테스트 문서(`docs/phase2_test_lists.md`)에 Step2 체크박스 추가.
+### 2. Step 4. Vector DB Migration (In Progress)
+- 벡터 마이그레이션 서비스(`api/app/services/vector_migration.py`):
+  - `migrate_vectors_to_qdrant(batch_size)`에서 `training_examples`(Schema H) 중 고품질 샘플을 필터링(`consistency_flag=high`, `was_accepted=True`, `groundtruth_field!=None`)하여 Qdrant `context_block_v1`로 업서트.
+  - Payload 매핑: `field=groundtruth_field`, `source_type="real_user"`, `original_created_at`.
+- Standalone 테스트(`scripts/phase2_test_step4_migration.py`):
+  - Mock Mongo/Qdrant을 사용해 upsert 파라미터와 payload 필드(특히 `field`, `source_type`)를 검증 → "✅ Phase 2 Step 4 Vector Migration Test Passed".
+- 테스트 체크리스트(`docs/phase2_test_lists.md`)에 Step4 항목 추가.
 
 ---
 
