@@ -5,7 +5,7 @@
 
 ---
 
-## 2025-11-22 – Phase 1.5 Step4 (Adaptive Scoring) 진행 중
+## 2025-11-22 – Phase 1.5 Step4 (Adaptive Scoring) 완료 & Integration 진행 중
 
 ### 0. Step 2. Diff Ratio Calculation Logic ✅
 - Schema K(`FullDocumentStore`, `api/app/schemas/document.py`) 정의: `blocks`, `latest_full_text`, `previous_full_text`, `diff_ratio`, `last_synced_at`, `schema_version` 등 v2.3 필드 정리.
@@ -18,14 +18,21 @@
 - 파일: `scripts/test_step3_macro_llm.py`
   - `AsyncMock`으로 LLM 응답을 패치하고 실제 Redis(`localhost:6379`)에 쓰기/읽기 검증. 성공 시 "✅ Step 3 Macro ETL Service Passed".
 
-### 2. Step 4. Adaptive Scoring Logic (In Progress)
+### 2. Step 4. Adaptive Scoring Logic ✅
 - 파일: `api/app/utils/scoring.py`
   - `calculate_maturity_score()`로 문서 길이를 [0,1] 스케일링, `calculate_alpha()`로 도큐먼트 가중치 계산.
 - 파일: `api/app/main.py`
-  - `/recommend`에서 Redis `get_macro_context()`를 불러 `P_doc`을 구성하고, 문서 길이 기반 `doc_maturity_score` → `applied_weight_doc(alpha)`를 산출.
-  - 최종 점수는 `(1-α)·P_vec + α·P_doc`으로 평가하며, 응답 및 A/I 이벤트에 `P_doc`, `doc_maturity_score`, `applied_weight_doc` 필드를 추가.
+  - `/recommend` 응답 및 A/I 이벤트에 `P_doc`, `doc_maturity_score`, `applied_weight_doc` 필드를 추가하고 `(1-α)·P_vec + α·P_doc` 가중 합 적용.
 - 파일: `scripts/test_step4_scoring.py`
-  - 짧은/긴 텍스트 케이스와 벡터/도큐먼트 스코어 블렌딩을 검증하여 "✅ Step 4 Scoring Logic Passed" 출력.
+  - 짧은/긴 텍스트 케이스와 스코어 블렌딩을 검증하여 "✅ Step 4 Scoring Logic Passed" 출력.
+
+### 3. Integration Wiring & Testing (In Progress)
+- 파일: `api/app/main.py`
+  - `update_document` 엔드포인트에 `BackgroundTasks`를 도입하고 diff_ratio ≥ 0.10 시 `analyze_and_cache_macro_context()`를 비동기 호출하여 Macro ETL 파이프 연결.
+- 파일: `scripts/phase1.5_test_integration.py`
+  - 실제 API(`http://localhost:8000`)를 클라이언트로 호출하여 문서 생성 → 짧은 추천 → 긴 텍스트 패치로 diff 발생 → 대기 → 재추천을 통해 `P_doc`/`applied_weight_doc` 변화까지 검증하는 통합 시나리오 스크립트 작성.
+- 파일: `docs/phase1.5_test_lists.md`
+  - Step 4 테스트 완료 체크 및 "Integration: Full Cycle" 체크리스트를 추가.
 
 ---
 

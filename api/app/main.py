@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import FastAPI, HTTPException, Query, status
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
 from kafka import KafkaProducer
 from pydantic import BaseModel
@@ -18,6 +18,7 @@ from .auth import auth_router
 from app.prompts import build_paraphrase_prompt
 from app.qdrant.service import compute_p_vec
 from app.redis.client import get_macro_context
+from app.services.macro_service import analyze_and_cache_macro_context
 from app.utils.embedding import get_embedding, embedding_service
 from app.utils.scoring import calculate_alpha, calculate_maturity_score
 
@@ -583,7 +584,9 @@ async def create_document(req: CreateDocumentRequest) -> Dict[str, Any]:
 
 
 @app.patch("/documents/{doc_id}")
-async def update_document(doc_id: str, req: UpdateDocumentRequest) -> Dict[str, Any]:
+async def update_document(
+    doc_id: str, req: UpdateDocumentRequest, background_tasks: BackgroundTasks
+) -> Dict[str, Any]:
     if not req.user_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -615,4 +618,7 @@ async def update_document(doc_id: str, req: UpdateDocumentRequest) -> Dict[str, 
             }
         },
     )
+    if diff_ratio >= 0.10 and curr_text:
+        print(f"[Macro] Triggering Macro ETL for doc_id={doc_id} diff_ratio={diff_ratio:.3f}")
+        background_tasks.add_task(analyze_and_cache_macro_context, doc_id, curr_text)
     return {"doc_id": doc_id, "status": "updated"}
