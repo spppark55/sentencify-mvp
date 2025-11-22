@@ -5,6 +5,21 @@
 
 ---
 
+## 2025-11-19 – Phase 1.5 Step1 (Redis Schema F) 완료
+
+### 1. Step 1. Redis Infrastructure & Schema F ✅
+- Phase 1.5 Step 1을 완료하고, `docker-compose.mini.yml`의 `redis` 서비스/`api/requirements.txt`의 `redis` 패키지 존재를 재확인(추가 변경 없음).
+- Schema F(`DocumentContextCache`, `api/app/schemas/macro.py`)를 v2.3 필드( `macro_llm_version`, `schema_version` 등)로 정의.
+- Async Redis 클라이언트(`api/app/redis/client.py`): `get_redis_client()`, `set_macro_context()`, `get_macro_context()` 구현. 기본 호스트 `redis`, TTL 기본 3600초.
+
+### 2. Standalone 테스트 & Phase1.5 테스트 리스트
+- 파일: `scripts/test_step1_redis.py`
+  - `REDIS_HOST`/`REDIS_PORT` 환경변수로 접속 대상 지정 → Schema F 저장/조회 라운드트립 검증 후 "✅ Step 1 Redis Test Passed" 출력.
+- 파일: `docs/phase1.5_test_lists.md`
+  - 체크리스트 `Step 1: Redis Connection & Schema F Serialization` 완료 표시.
+
+---
+
 ## 2025-11-18 – Phase1 Step1 E2E + Kafka 세팅
 
 ### 1. BE `/recommend` API 고도화 (Stub 기반)
@@ -672,3 +687,22 @@
     - `doc.text`를 에디터의 `text`로 반영.
     - 선택/컨텍스트/추천 상태를 초기화하여 새 문서로 전환.
   - `Sidebar`를 `userId`와 `onSelectDoc`을 넘겨 사용하는 형태로 변경.
+
+## 2025-11-19 – Phase 1.5 Step1 (Redis Schema F) 진행 중
+
+### 1. Phase 1.5 착수
+- Phase 1.5 Macro Context 단계 시작을 선언하고 Step 1 상태를 **In Progress**로 기록.
+- `docker-compose.mini.yml`에 `redis` 서비스 존재 여부, `api/requirements.txt`에 `redis` 패키지 포함 여부를 검증(변경 사항 없음).
+
+### 2. Schema F & Redis 클라이언트
+- 파일: `api/app/schemas/macro.py`, `api/app/redis/client.py`, `api/app/redis/__init__.py`, `api/app/schemas/__init__.py`
+  - Schema F(`DocumentContextCache`) 정의: `doc_id`, `macro_topic`, `macro_category_hint`, `cache_hit_count`, `last_updated`, `valid_until`, `invalidated_by_diff`, `diff_ratio`.
+  - Redis Async 클라이언트(`redis.asyncio`) 추가: `get_redis_client()`, `set_macro_context()`, `get_macro_context()` 구현 및 공용 키 프리픽스 적용.
+
+### 3. Standalone 테스트 & Phase1.5 테스트 리스트
+- 파일: `scripts/test_step1_redis.py`
+  - 루트 경로에서 실행 가능한 독립 검증 스크립트. 로컬 Redis 접속 → Schema F Dummy 작성 → 저장 후 재로딩 검증.
+- 파일: `docs/phase1.5_test_lists.md`
+  - Phase 1.5 테스트 항목 시작 (`Redis Connection Test`, `Schema F Validation`).
+
+---
