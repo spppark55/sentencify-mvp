@@ -54,6 +54,14 @@ export default function App() {
   const [recommendInsertId, setRecommendInsertId] = useState(null);
   const [recoOptions, setRecoOptions] = useState([]);
   const [contextHash, setContextHash] = useState(null);
+  const INITIAL_SCORING_INFO = {
+    P_vec: {},
+    P_doc: {},
+    P_rule: {},
+    doc_maturity_score: 0,
+    applied_weight_doc: 0,
+  };
+  const [scoringInfo, setScoringInfo] = useState({ ...INITIAL_SCORING_INFO });
 
   // 제목 생성 헬퍼 (Frontend)
   const makeTitle = (t) => {
@@ -265,6 +273,7 @@ export default function App() {
       setRecommendInsertId(null);
       setRecoOptions([]);
       setContextHash(null);
+      setScoringInfo({ ...INITIAL_SCORING_INFO });
       return;
     }
 
@@ -297,6 +306,13 @@ export default function App() {
       setRecommendInsertId(res.insert_id);
       setRecoOptions(res.reco_options || []);
       setContextHash(res.context_hash || null);
+      setScoringInfo({
+        P_vec: res.P_vec || {},
+        P_doc: res.P_doc || {},
+        P_rule: res.P_rule || {},
+        doc_maturity_score: res.doc_maturity_score ?? 0,
+        applied_weight_doc: res.applied_weight_doc ?? 0,
+      });
 
       const topOption = res.reco_options?.[0];
       if (topOption?.category && optEnabled.category) setCategory(topOption.category);
@@ -439,6 +455,7 @@ export default function App() {
             options={{ category, language, strength, requestText, optEnabled, recoOptions, contextHash }}
             docId={docId}
             recommendId={recommendId}
+            scoringInfo={scoringInfo}
           />
         </main>
         <aside className="border-l p-4">

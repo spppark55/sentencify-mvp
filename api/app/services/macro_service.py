@@ -6,19 +6,19 @@ import re
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-import google.generativeai as genai
 from dotenv import load_dotenv
+from openai import AsyncOpenAI
 
 from app.redis.client import set_macro_context
 from app.schemas.macro import DocumentContextCache
 
 load_dotenv()
-_API_KEY = os.getenv("GEMINI_API_KEY")
-if _API_KEY:
-    genai.configure(api_key=_API_KEY)
+_OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+_client: Optional[AsyncOpenAI] = None
+if _OPENAI_API_KEY:
+    _client = AsyncOpenAI(api_key=_OPENAI_API_KEY)
 
-_MODEL_NAME = "gemini-2.5-flash"
-_model = genai.GenerativeModel(_MODEL_NAME)
+_MODEL_NAME = "gpt-4.1-nano"
 
 _JSON_REGEX = re.compile(r"\{.*\}", re.DOTALL)
 
@@ -37,7 +37,7 @@ def _extract_json_payload(text: str) -> dict[str, str]:
 async def analyze_and_cache_macro_context(
     doc_id: str, full_text: str
 ) -> Optional[DocumentContextCache]:
-    if not full_text or len(full_text) < 10:
+    if not full_text or len(full_text) < 10 or _client is None:
         return None
 
     truncated_text = full_text[:3000]
@@ -48,8 +48,15 @@ async def analyze_and_cache_macro_context(
         f"Text: {truncated_text}"
     )
 
-    response = await _model.generate_content_async(prompt)
-    payload = _extract_json_payload(response.text or "")
+    response = await _client.chat.completions.create(
+        model=_MODEL_NAME,
+        messages=[
+            {"role": "system", "content": "You are a helpful assistant."},
+            {"role": "user", "content": prompt},
+        ],
+    )
+    content = response.choices[0].message.content if response.choices else ""
+    payload = _extract_json_payload(content or "")
     topic = payload.get("topic")
     category = payload.get("category")
     if not topic or not category:

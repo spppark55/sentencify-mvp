@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import uuid
 from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from pymongo import MongoClient
 
@@ -58,14 +58,49 @@ def _build_pipeline() -> List[Dict[str, Any]]:
     ]
 
 
+def _parse_timestamp(entry: Optional[Dict[str, Any]]) -> float:
+    if not entry:
+        return 0.0
+    created_at = entry.get("created_at")
+    if created_at:
+        try:
+            return datetime.fromisoformat(
+                str(created_at).replace("Z", "+00:00")
+            ).timestamp()
+        except (TypeError, ValueError):
+            pass
+    time_value = entry.get("time")
+    if isinstance(time_value, (int, float)):
+        return float(time_value) / 1000
+    return 0.0
+
+
 def _calc_consistency(log_a: Dict[str, Any], log_b: Dict[str, Any]) -> str:
     if not log_a or not log_b:
         return "low"
-    ts_a = log_a.get("time") or 0
-    ts_b = log_b.get("time") or 0
-    if abs(ts_a - ts_b) > 5000:
+    ts_a = _parse_timestamp(log_a)
+    ts_b = _parse_timestamp(log_b)
+    if ts_a == 0 or ts_b == 0:
+        return "low"
+    if abs(ts_a - ts_b) > 60:
         return "low"
     return "high"
+
+
+def _get_groundtruth(row: Dict[str, Any], log_d: Optional[Dict[str, Any]], log_b: Optional[Dict[str, Any]]) -> Optional[str]:
+    return (
+        row.get("field")
+        or (log_d or {}).get("field")
+        or (log_b or {}).get("target_category")
+    )
+
+
+def _parse_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() == "true"
+    return bool(value)
 
 
 def run_etl_pipeline(mongo_client: MongoClient | None = None) -> int:
@@ -74,10 +109,8 @@ def run_etl_pipeline(mongo_client: MongoClient | None = None) -> int:
     log_c = db["log_c_select"]
     training_examples = db["training_examples"]
 
-    pipeline = _build_pipeline()
     processed = 0
-
-    for row in log_c.aggregate(pipeline):
+    for row in log_c.aggregate(_build_pipeline()):
         log_a = (row.get("log_a") or [None])[0]
         log_b = (row.get("log_b") or [None])[0]
         log_d = (row.get("log_d") or [None])[0]
@@ -89,6 +122,7 @@ def run_etl_pipeline(mongo_client: MongoClient | None = None) -> int:
 
         reco_options = (log_a or {}).get("reco_options") or []
         reco_category_input = reco_options[0].get("category") if reco_options else None
+
         example = TrainingExample(
             example_id=example_id,
             recommend_session_id=row.get("recommend_session_id"),
@@ -96,8 +130,8 @@ def run_etl_pipeline(mongo_client: MongoClient | None = None) -> int:
             context_embedding=(log_e or {}).get("embedding") or [],
             macro_category_hint=(log_f or {}).get("macro_category_hint"),
             reco_category_input=reco_category_input,
-            groundtruth_field=row.get("field") or (log_d or {}).get("field"),
-            was_accepted=bool(row.get("was_accepted")),
+            groundtruth_field=_get_groundtruth(row, log_d, log_b),
+            was_accepted=_parse_bool(row.get("was_accepted")),
             doc_id=row.get("doc_id"),
             context_hash=row.get("context_hash"),
             source_recommend_event_id=row.get("source_recommend_event_id"),

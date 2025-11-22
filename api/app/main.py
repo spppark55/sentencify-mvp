@@ -12,7 +12,7 @@ from kafka import KafkaProducer
 from pydantic import BaseModel
 from pymongo import MongoClient
 from dotenv import load_dotenv
-import google.generativeai as genai
+from openai import AsyncOpenAI
 from .auth import auth_router
 
 from app.prompts import build_paraphrase_prompt
@@ -118,12 +118,12 @@ KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
 KAFKA_ENABLED = os.getenv("KAFKA_ENABLED", "true").lower() != "false"
 MONGO_URI = os.getenv("MONGO_URI", "mongodb://mongo:27017")
 MONGO_DB_NAME = os.getenv("MONGO_DB_NAME", "sentencify")
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-if GEMINI_API_KEY:
-    print("[Gemini] API key loaded from environment.")
-    genai.configure(api_key=GEMINI_API_KEY)
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+_openai_client: AsyncOpenAI | None = AsyncOpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
+if OPENAI_API_KEY:
+    print("[OpenAI] API key loaded from environment.")
 else:
-    print("[Gemini] API key not found; paraphrase endpoint will use fallbacks.")
+    print("[OpenAI] API key not found; paraphrase endpoint will use fallbacks.")
 
 _kafka_producer: KafkaProducer | None = None
 _mongo_client: MongoClient | None = None
@@ -435,16 +435,15 @@ async def paraphrase(req: ParaphraseRequest) -> ParaphraseResponse:
         "target_intensity": intensity,
         "style_request": req.style_request,
         "created_at": _now_iso(),
-        "paraphrase_llm_version": "gemini-2.5-flash",
+        "paraphrase_llm_version": "gpt-4.1-nano",
     }
     produce_b_event(b_event)
 
-    if not GEMINI_API_KEY:
-        print("GEMINI_API_KEY is not configured. Returning fallback candidates.")
+    if _openai_client is None:
+        print("OPENAI_API_KEY is not configured. Returning fallback candidates.")
         return ParaphraseResponse(candidates=fallback_candidates)
 
     try:
-        model = genai.GenerativeModel("gemini-2.5-flash")
         prompt = build_paraphrase_prompt(
             selected_text=req.selected_text,
             category=category,
@@ -454,12 +453,20 @@ async def paraphrase(req: ParaphraseRequest) -> ParaphraseResponse:
             context_prev=req.context_prev,
             context_next=req.context_next,
         )
-        response = await model.generate_content_async(prompt)
-        raw_text = getattr(response, "text", "") or ""
+        response = await _openai_client.chat.completions.create(
+            model="gpt-4.1-nano",
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant."},
+                {"role": "user", "content": prompt},
+            ],
+        )
+        raw_text = (
+            response.choices[0].message.content if response.choices else ""
+        ) or ""
         candidates = _clean_candidates(raw_text, fallback_text)
         return ParaphraseResponse(candidates=candidates)
     except Exception as exc:
-        print(f"[Gemini] Error during generate_content_async: {exc}")
+        print(f"[OpenAI] Error during chat completion: {exc}")
         return ParaphraseResponse(candidates=fallback_candidates)
 
 

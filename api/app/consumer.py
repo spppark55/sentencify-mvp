@@ -149,6 +149,9 @@ class SmartRouter:
 
     def _handle_recommend(self, payload: Dict[str, Any]) -> None:
         log_a = LogA(
+            insert_id=payload.get("insert_id"),
+            recommend_session_id=payload.get("recommend_session_id"),
+            user_id=payload.get("user_id"),
             doc_id=payload.get("doc_id"),
             reco_options=payload.get("reco_options") or [],
             P_vec=payload.get("P_vec") or {},
@@ -227,10 +230,31 @@ def consume_loop(router: SmartRouter, consumer: KafkaConsumer) -> None:
         router.flush_all()
 
 
+class PeriodicFlusher(threading.Thread):
+    def __init__(self, router: SmartRouter, interval: float = 1.0):
+        super().__init__(daemon=True)
+        self.router = router
+        self.interval = interval
+        self.stop_event = threading.Event()
+
+    def run(self) -> None:
+        while not self.stop_event.is_set():
+            time.sleep(self.interval)
+            self.router.flush_all()
+
+    def stop(self) -> None:
+        self.stop_event.set()
+
+
 def main() -> None:
     router = SmartRouter()
     consumer = build_kafka_consumer(KAFKA_TOPICS)
-    consume_loop(router, consumer)
+    flusher = PeriodicFlusher(router, interval=1.0)
+    flusher.start()
+    try:
+        consume_loop(router, consumer)
+    finally:
+        flusher.stop()
 
 
 if __name__ == "__main__":

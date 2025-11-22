@@ -8,6 +8,14 @@ export default function Header({ onLogout }) {
       </div>
 
       <nav className="flex items-center gap-4 text-sm">
+        <a
+          className="text-gray-600 hover:text-black"
+          href="http://localhost:8501"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          관리자 대시보드
+        </a>
         <a className="text-gray-600 hover:text-black" href="#">
           에디터
         </a>

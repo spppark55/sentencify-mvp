@@ -38,7 +38,7 @@ def make_mock_mongo():
             "index": 0,
             "log_a": [
                 {
-                    "time": 1000,
+                    "created_at": "2025-01-01T00:00:00Z",
                     "reco_options": [{"category": "email"}],
                     "P_vec": {"email": 0.8},
                     "P_doc": {"email": 0.6},
@@ -49,10 +49,11 @@ def make_mock_mongo():
             ],
             "log_b": [
                 {
-                    "time": 1200,
+                    "created_at": "2025-01-01T00:00:30Z",
                     "tone": "polite",
                     "llm_provider": "google",
                     "response_time_ms": 150,
+                    "target_category": "email",
                 }
             ],
             "log_d": [

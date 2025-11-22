@@ -5,19 +5,22 @@
 
 ---
 
-## 2025-11-23 – Phase 2 Step4 (Vector Migration) 진행 중
+## 2025-11-24 – Phase 2 Step5 (Analytics Dashboard) 진행 중
 
-### 1. Step 3. User Profile Service ✅
-- Schema G 정의(`api/app/schemas/profile.py`) 및 Profile 업서트 로직(`api/app/services/profile_service.py`) 완성.
-- Standalone 테스트(`scripts/phase2_test_step3_profile.py`)로 recommend_accept_rate 및 vector 정규화 검증 → "✅ Phase 2 Step 3 Profile Service Test Passed".
+### 1. Step 4. Vector DB Migration ✅
+- `api/app/services/vector_migration.py`에서 Schema H → Qdrant 업서트 파이프라인 완성, "real_user" payload 태그로 구분.
+- Standalone 테스트(`scripts/phase2_test_step4_migration.py`)로 컬렉션/필드 매핑 검증 → "✅ Phase 2 Step 4 Vector Migration Test Passed".
 
-### 2. Step 4. Vector DB Migration (In Progress)
-- 벡터 마이그레이션 서비스(`api/app/services/vector_migration.py`):
-  - `migrate_vectors_to_qdrant(batch_size)`에서 `training_examples`(Schema H) 중 고품질 샘플을 필터링(`consistency_flag=high`, `was_accepted=True`, `groundtruth_field!=None`)하여 Qdrant `context_block_v1`로 업서트.
-  - Payload 매핑: `field=groundtruth_field`, `source_type="real_user"`, `original_created_at`.
-- Standalone 테스트(`scripts/phase2_test_step4_migration.py`):
-  - Mock Mongo/Qdrant을 사용해 upsert 파라미터와 payload 필드(특히 `field`, `source_type`)를 검증 → "✅ Phase 2 Step 4 Vector Migration Test Passed".
-- 테스트 체크리스트(`docs/phase2_test_lists.md`)에 Step4 항목 추가.
+### 2. Step 5. Streamlit Dashboard (In Progress)
+- `dashboard/` 모듈 신규 추가:
+  - `app.py` + `pages/` 구성으로 Phase 1/1.5/2 뷰 분리.
+  - `queries.py`에서 Mongo/Redis 연결, `@st.cache_data` 기반 KPI 질의(`get_total_traffic`, `get_macro_stats`, `get_golden_data_count` 등).
+  - `requirements.txt`, `Dockerfile` 작성 후 docker-compose에 `dashboard` 서비스 추가.
+- Streamlit 레이아웃:
+  - 메인 페이지: KPI, 카테고리 분포, Macro Gatekeeper 지표.
+  - Phase별 페이지: Plotly 차트와 Metric 컴포넌트 활용.
+- 백엔드 LLM 공급자를 Gemini 2.5 Flash → OpenAI `gpt-4.1-nano`로 이전하여 Macro ETL/Paraphrase 경로 및 테스트를 일괄 수정.
+- 문서 업데이트: `docs/phase2_test_lists.md`에 Step5 관련 항목 추가 예정(현 단계에서는 Step4까지 기록됨).
 
 ---
 

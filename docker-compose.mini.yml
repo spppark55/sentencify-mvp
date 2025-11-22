@@ -143,6 +143,22 @@ services:
     networks:
       - sentencify-net
 
+  dashboard:
+    build:
+      context: ./dashboard
+    ports:
+      - "8501:8501"
+    environment:
+      MONGO_URI: "mongodb://mongo:27017"
+      MONGO_DB_NAME: "sentencify"
+      REDIS_HOST: "redis"
+      REDIS_PORT: "6379"
+    depends_on:
+      - mongo
+      - redis
+    networks:
+      - sentencify-net
+
 networks:
   sentencify-net:
     driver: bridge
