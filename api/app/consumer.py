@@ -1,209 +1,236 @@
 import json
 import os
 import threading
-import uuid
-from datetime import datetime, timezone
-from typing import Any, Dict
+import time
+from datetime import datetime
+from typing import Any, Dict, Iterable, List, Optional
 
 from kafka import KafkaConsumer
 from pymongo import MongoClient
-from qdrant_client import QdrantClient
-from qdrant_client.http import models as qmodels
 
+from app.schemas.corporate import CorporateRunLog, CorporateSelectLog, CorrectionHistory
+from app.schemas.logs import LogA, LogB, LogC, LogI
 
 KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
 MONGO_URI = os.getenv("MONGO_URI", "mongodb://mongo:27017")
 MONGO_DB_NAME = os.getenv("MONGO_DB_NAME", "sentencify")
-QDRANT_HOST = os.getenv("QDRANT_HOST", "qdrant")
-QDRANT_PORT = int(os.getenv("QDRANT_PORT", "6333"))
-EMBED_DIM = int(os.getenv("EMBED_DIM", "768"))
+BATCH_MAX_SIZE = int(os.getenv("CONSUMER_BATCH_SIZE", "100"))
+BATCH_FLUSH_INTERVAL = float(os.getenv("CONSUMER_BATCH_INTERVAL", "1.0"))
+KAFKA_TOPICS = [
+    "editor_run_paraphrasing",
+    "editor_selected_paraphrasing",
+    "editor_recommend_options",
+    "recommend_log",
+    "editor_document_snapshot",
+]
 
 
-def now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+class BatchProcessor:
+    def __init__(self, collection, name: str, max_size: int, flush_interval: float):
+        self.collection = collection
+        self.name = name
+        self.max_size = max_size
+        self.flush_interval = flush_interval
+        self._buffer: List[Dict[str, Any]] = []
+        self._lock = threading.Lock()
+        self._last_flush = time.time()
+
+    def add(self, doc: Any) -> None:
+        if doc is None:
+            return
+        if hasattr(doc, "model_dump"):
+            payload = doc.model_dump()
+        else:
+            payload = dict(doc)
+        with self._lock:
+            self._buffer.append(payload)
+            should_flush = len(self._buffer) >= self.max_size or (
+                time.time() - self._last_flush >= self.flush_interval
+            )
+            if should_flush:
+                self._flush_locked()
+
+    def flush(self, force: bool = False) -> None:
+        with self._lock:
+            if self._buffer and (force or (time.time() - self._last_flush) >= self.flush_interval):
+                self._flush_locked()
+
+    def _flush_locked(self) -> None:
+        if not self._buffer:
+            return
+        docs = self._buffer
+        self._buffer = []
+        try:
+            self.collection.insert_many(docs)
+        except Exception as exc:
+            print(f"[BatchProcessor:{self.name}] insert_many failed: {exc}")
+            self._buffer.extend(docs)
+            return
+        self._last_flush = time.time()
 
 
-def get_mongo_collection(name: str):
-    client = MongoClient(MONGO_URI)
-    db = client[MONGO_DB_NAME]
-    return db[name]
-
-
-def get_qdrant_client() -> QdrantClient:
-    return QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT)
-
-
-def ensure_qdrant_collection(client: QdrantClient) -> None:
-    name = "context_block_v1"
-    try:
-        client.get_collection(name)
-        return
-    except Exception:
-        # 컬렉션이 없으면 생성
-        client.recreate_collection(
-            collection_name=name,
-            vectors_config=qmodels.VectorParams(
-                size=EMBED_DIM,
-                distance=qmodels.Distance.COSINE,
+class SmartRouter:
+    def __init__(
+        self,
+        mongo_client: Optional[MongoClient] = None,
+        batch_size: int = BATCH_MAX_SIZE,
+        flush_interval: float = BATCH_FLUSH_INTERVAL,
+    ):
+        self.mongo_client = mongo_client or MongoClient(MONGO_URI)
+        self.db = self.mongo_client[MONGO_DB_NAME]
+        self.batchers = {
+            "corporate_run_logs": BatchProcessor(
+                self.db["corporate_run_logs"], "corporate_run_logs", batch_size, flush_interval
             ),
+            "corporate_select_logs": BatchProcessor(
+                self.db["corporate_select_logs"], "corporate_select_logs", batch_size, flush_interval
+            ),
+            "correction_history": BatchProcessor(
+                self.db["correction_history"], "correction_history", batch_size, flush_interval
+            ),
+            "log_a_recommend": BatchProcessor(
+                self.db["log_a_recommend"], "log_a_recommend", batch_size, flush_interval
+            ),
+            "log_b_run": BatchProcessor(self.db["log_b_run"], "log_b_run", batch_size, flush_interval),
+            "log_c_select": BatchProcessor(
+                self.db["log_c_select"], "log_c_select", batch_size, flush_interval
+            ),
+            "log_i_meta": BatchProcessor(self.db["log_i_meta"], "log_i_meta", batch_size, flush_interval),
+        }
+        self.full_document_store = self.db["full_document_store"]
+
+    def handle_payload(self, payload: Dict[str, Any]) -> None:
+        event = payload.get("event")
+        if event == "editor_run_paraphrasing":
+            self._handle_run(payload)
+        elif event == "editor_selected_paraphrasing":
+            self._handle_select(payload)
+        elif event == "editor_recommend_options":
+            self._handle_recommend(payload)
+        elif event == "recommend_log":
+            self._handle_recommend_log(payload)
+        elif event == "editor_document_snapshot":
+            self._handle_snapshot(payload)
+
+    def flush_all(self) -> None:
+        for processor in self.batchers.values():
+            processor.flush(force=True)
+
+    def _handle_run(self, payload: Dict[str, Any]) -> None:
+        run_doc = CorporateRunLog(**payload)
+        log_b_data = dict(payload)
+        log_b_data.setdefault("source_recommend_event_id", payload.get("source_recommend_event_id"))
+        log_b_data.setdefault("recommend_session_id", payload.get("recommend_session_id"))
+        log_b = LogB(**log_b_data)
+        self.batchers["corporate_run_logs"].add(run_doc)
+        self.batchers["log_b_run"].add(log_b)
+
+    def _handle_select(self, payload: Dict[str, Any]) -> None:
+        select_doc = CorporateSelectLog(**payload)
+        log_c_data = dict(payload)
+        log_c_data.setdefault("source_recommend_event_id", payload.get("source_recommend_event_id"))
+        log_c_data.setdefault("recommend_session_id", payload.get("recommend_session_id"))
+        log_c = LogC(**log_c_data)
+        self.batchers["corporate_select_logs"].add(select_doc)
+        self.batchers["log_c_select"].add(log_c)
+
+        if payload.get("was_accepted"):
+            correction = CorrectionHistory(
+                user=payload.get("user_id"),
+                field=payload.get("field"),
+                intensity=payload.get("maintenance"),
+                user_prompt=payload.get("user_prompt"),
+                input_sentence=payload.get("selected_text")
+                or payload.get("input_sentence"),
+                output_sentences=payload.get("paraphrasing_candidates") or [],
+                selected_index=payload.get("index"),
+            )
+            self.batchers["correction_history"].add(correction)
+
+    def _handle_recommend(self, payload: Dict[str, Any]) -> None:
+        log_a = LogA(
+            doc_id=payload.get("doc_id"),
+            reco_options=payload.get("reco_options") or [],
+            P_vec=payload.get("P_vec") or {},
+            P_doc=payload.get("P_doc") or {},
+            applied_weight_doc=payload.get("applied_weight_doc") or 0.0,
+            doc_maturity_score=payload.get("doc_maturity_score") or 0.0,
         )
+        self.batchers["log_a_recommend"].add(log_a)
 
+    def _handle_recommend_log(self, payload: Dict[str, Any]) -> None:
+        log_i = LogI(
+            latency_ms=payload.get("latency_ms"),
+            model_version=payload.get("model_version"),
+            is_shadow_mode=payload.get("is_shadow_mode"),
+        )
+        self.batchers["log_i_meta"].add(log_i)
 
-def make_stub_vector() -> list[float]:
-    # 아직 임베딩 모델이 없으므로 0 벡터 Stub 사용
-    return [0.0] * EMBED_DIM
-
-
-def process_c_events() -> None:
-    collection = get_mongo_collection("correction_history")
-    consumer = KafkaConsumer(
-        "editor_selected_paraphrasing",
-        bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
-        value_deserializer=lambda v: json.loads(v.decode("utf-8")),
-        auto_offset_reset="earliest",
-        enable_auto_commit=True,
-        group_id="sentencify_c_consumer",
-    )
-    print("[C-consumer] started, listening on topic editor_selected_paraphrasing")
-
-    for msg in consumer:
-        try:
-            payload: Dict[str, Any] = msg.value
-            # was_accepted 가 명시적으로 false가 아니면 저장 (기본 True)
-            if payload.get("was_accepted") is False:
-                continue
-
-            doc = dict(payload)
-            doc["created_at"] = now_iso()
-            collection.insert_one(doc)
-            print("[C-consumer] inserted correction_history document")
-        except Exception as exc:
-            print(f"[C-consumer] error processing message: {exc}")
-
-
-def process_e_events() -> None:
-    client = get_qdrant_client()
-    ensure_qdrant_collection(client)
-
-    consumer = KafkaConsumer(
-        "context_block",
-        bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
-        value_deserializer=lambda v: json.loads(v.decode("utf-8")),
-        auto_offset_reset="earliest",
-        enable_auto_commit=True,
-        group_id="sentencify_e_consumer",
-    )
-    print("[E-consumer] started, listening on topic context_block")
-
-    while True:
-        try:
-            for msg in consumer:
-                payload: Dict[str, Any] = msg.value
-                point_id = str(uuid.uuid4())
-                vector = make_stub_vector()
-
-                client.upsert(
-                    collection_name="context_block_v1",
-                    points=[
-                        qmodels.PointStruct(
-                            id=point_id,
-                            vector=vector,
-                            payload=payload,
-                        )
-                    ],
-                )
-                print("[E-consumer] upserted point into context_block_v1")
-        except Exception as exc:
-            print(f"[E-consumer] error processing message: {exc}")
-
-
-def process_k_events() -> None:
-    collection = get_mongo_collection("full_document_store")
-    consumer = KafkaConsumer(
-        "editor_document_snapshot",
-        bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
-        value_deserializer=lambda v: json.loads(v.decode("utf-8")),
-        auto_offset_reset="earliest",
-        enable_auto_commit=True,
-        group_id="sentencify_k_consumer",
-    )
-    print("[K-consumer] started, listening on topic editor_document_snapshot")
-
-    for msg in consumer:
-        try:
-            payload: Dict[str, Any] = msg.value
-            doc_id = payload.get("doc_id")
-            if not doc_id:
-                print("[K-consumer] skip message without doc_id")
-                continue
-
-            full_text = payload.get("full_text") or ""
-            now = now_iso()
-
-            existing = collection.find_one({"doc_id": doc_id})
-
-            if existing:
-                prev_text = existing.get("latest_full_text") or ""
-                curr_text = full_text
-
-                len_prev = len(prev_text)
-                len_curr = len(curr_text)
-                len_diff = abs(len_curr - len_prev)
-                denominator = max(len_prev, 1)
-                diff_ratio = len_diff / denominator
-
-                collection.update_one(
-                    {"_id": existing["_id"]},
-                    {
-                        "$set": {
-                            "previous_full_text": prev_text,
-                            "latest_full_text": curr_text,
-                            "diff_ratio": diff_ratio,
-                            "last_synced_at": now,
-                        }
-                    },
-                )
-                print("[K-consumer] updated full_document_store document")
-            else:
-                doc = {
+    def _handle_snapshot(self, payload: Dict[str, Any]) -> None:
+        doc_id = payload.get("doc_id")
+        if not doc_id:
+            return
+        full_text = payload.get("full_text") or ""
+        user_id = payload.get("user_id")
+        now = datetime.utcnow().isoformat()
+        existing = self.full_document_store.find_one({"doc_id": doc_id})
+        if existing:
+            prev_text = existing.get("latest_full_text") or ""
+            len_prev = len(prev_text)
+            len_curr = len(full_text)
+            diff_ratio = abs(len_curr - len_prev) / max(len_prev, 1)
+            self.full_document_store.update_one(
+                {"_id": existing["_id"]},
+                {
+                    "$set": {
+                        "previous_full_text": prev_text,
+                        "latest_full_text": full_text,
+                        "diff_ratio": diff_ratio,
+                        "last_synced_at": now,
+                    }
+                },
+            )
+        else:
+            self.full_document_store.insert_one(
+                {
                     "doc_id": doc_id,
+                    "user_id": user_id,
                     "latest_full_text": full_text,
                     "previous_full_text": None,
                     "diff_ratio": 1.0,
                     "created_at": now,
                     "last_synced_at": now,
                 }
-                user_id = payload.get("user_id")
-                if user_id is not None:
-                    doc["user_id"] = user_id
-                collection.insert_one(doc)
-                print("[K-consumer] inserted new full_document_store document")
-        except Exception as exc:
-            print(f"[K-consumer] error processing message: {exc}")
+            )
+
+
+def build_kafka_consumer(topics: Iterable[str]) -> KafkaConsumer:
+    return KafkaConsumer(
+        *topics,
+        bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
+        value_deserializer=lambda v: json.loads(v.decode("utf-8")),
+        auto_offset_reset="earliest",
+        enable_auto_commit=True,
+        group_id="sentencify_phase2_router",
+    )
+
+
+def consume_loop(router: SmartRouter, consumer: KafkaConsumer) -> None:
+    try:
+        for msg in consumer:
+            payload = msg.value
+            if isinstance(payload, dict):
+                router.handle_payload(payload)
+    except KeyboardInterrupt:
+        print("[consumer] Interrupted; flushing batches...")
+    finally:
+        router.flush_all()
 
 
 def main() -> None:
-    threads: list[threading.Thread] = []
-
-    t_c = threading.Thread(target=process_c_events, name="c-consumer", daemon=True)
-    t_e = threading.Thread(target=process_e_events, name="e-consumer", daemon=True)
-    t_k = threading.Thread(target=process_k_events, name="k-consumer", daemon=True)
-
-    threads.append(t_c)
-    threads.append(t_e)
-    threads.append(t_k)
-
-    for t in threads:
-        t.start()
-
-    print("[consumer] C/E/K consumers started. Press Ctrl+C to exit.")
-
-    try:
-        # 메인 스레드를 살아 있게 유지
-        for t in threads:
-            t.join()
-    except KeyboardInterrupt:
-        print("[consumer] interrupted, shutting down...")
+    router = SmartRouter()
+    consumer = build_kafka_consumer(KAFKA_TOPICS)
+    consume_loop(router, consumer)
 
 
 if __name__ == "__main__":

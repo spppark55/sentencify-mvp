@@ -5,6 +5,22 @@
 
 ---
 
+## 2025-11-23 – Phase 2 Step2 (Training ETL) 진행 중
+
+### 1. Step 1 완료 요약
+- Enterprise/Analytics 스키마 정의(`api/app/schemas/corporate.py`, `api/app/schemas/logs.py`) 및 Smart Consumer Router + Batching(`api/app/consumer.py`) 구현.
+- `scripts/phase2_test_step1_consumer.py`로 Router/Batching 플로우 검증 완료.
+
+### 2. Step 2. Training ETL Pipeline (In Progress)
+- Schema H 정의(`api/app/schemas/training.py`): `TrainingExample` 필드(예제 ID, 세션 ID, consistency flag, embedding, macro hint, 스코어 등) 명시.
+- ETL 서비스(`api/app/services/etl_service.py`):
+  - `run_etl_pipeline()`에서 `log_c_select` 중심 `$lookup` (A/B/D/E/F) 후 Python consistency 체크(`±5s` 기준)와 `training_examples` upsert.
+- Standalone 테스트(`scripts/phase2_test_step2_etl.py`):
+  - Mock Mongo aggregate 결과를 기반으로 Trainer upsert 및 consistency flag=high 여부 검증 → "✅ Phase 2 Step 2 ETL Service Test Passed".
+- 테스트 문서(`docs/phase2_test_lists.md`)에 Step2 체크박스 추가.
+
+---
+
 ## 2025-11-22 – Phase 1.5 Step4 (Adaptive Scoring) 완료 & Integration 진행 중
 
 ### 0. Step 2. Diff Ratio Calculation Logic ✅
