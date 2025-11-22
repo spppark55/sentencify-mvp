@@ -17,7 +17,9 @@ from .auth import auth_router
 
 from app.prompts import build_paraphrase_prompt
 from app.qdrant.service import compute_p_vec
+from app.redis.client import get_macro_context
 from app.utils.embedding import get_embedding, embedding_service
+from app.utils.scoring import calculate_alpha, calculate_maturity_score
 
 load_dotenv()
 
@@ -45,6 +47,9 @@ class RecommendResponse(BaseModel):
     reco_options: list[RecommendOption]
     P_rule: Dict[str, float]
     P_vec: Dict[str, float]
+    P_doc: Dict[str, float]
+    doc_maturity_score: float
+    applied_weight_doc: float
     context_hash: str
     model_version: str
     api_version: str
@@ -274,6 +279,11 @@ async def recommend(req: RecommendRequest) -> RecommendResponse:
 
     context_full = build_context_full(req.context_prev, req.selected_text, req.context_next)
     context_hash = build_context_hash(req.doc_id, context_full)
+    try:
+        macro_context = await get_macro_context(req.doc_id)
+    except Exception as exc:
+        print(f"[Redis] Failed to load macro context: {exc}", flush=True)
+        macro_context = None
 
     p_rule: Dict[str, float] = {"thesis": 0.5, "email": 0.3, "article": 0.2}
 
@@ -291,10 +301,23 @@ async def recommend(req: RecommendRequest) -> RecommendResponse:
     except Exception as e:
         print(f"[ERROR] P_vec calculation failed: {e}", flush=True)
         p_vec = {"thesis": 0.7, "email": 0.2, "article": 0.1}
-        
+
+    p_doc: Dict[str, float] = {}
+    if macro_context:
+        p_doc[macro_context.macro_category_hint] = 1.0
+
+    doc_text_for_len = (req.context_prev or "") + (req.selected_text or "") + (req.context_next or "")
+    doc_length = len(doc_text_for_len)
+    doc_maturity = calculate_maturity_score(doc_length)
+    alpha = calculate_alpha(doc_maturity)
+
+    score_categories = set(p_vec) | set(p_doc)
+    if not score_categories:
+        score_categories = set(p_rule)
+
     final_scores: Dict[str, float] = {}
-    for k in set(p_rule) | set(p_vec):
-        final_scores[k] = 0.5 * p_rule.get(k, 0.0) + 0.5 * p_vec.get(k, 0.0)
+    for k in score_categories:
+        final_scores[k] = (1 - alpha) * p_vec.get(k, 0.0) + alpha * p_doc.get(k, 0.0)
 
     best_category = max(final_scores, key=final_scores.get)
     language = req.language or "ko"
@@ -327,6 +350,9 @@ async def recommend(req: RecommendRequest) -> RecommendResponse:
         "reco_options": [o.model_dump() for o in reco_options],
         "P_rule": p_rule,
         "P_vec": p_vec,
+        "P_doc": p_doc,
+        "doc_maturity_score": doc_maturity,
+        "applied_weight_doc": alpha,
         "model_version": model_version,
         "api_version": api_version,
         "schema_version": schema_version,
@@ -345,6 +371,9 @@ async def recommend(req: RecommendRequest) -> RecommendResponse:
         "context_hash": context_hash,
         "P_rule": p_rule,
         "P_vec": p_vec,
+        "P_doc": p_doc,
+        "doc_maturity_score": doc_maturity,
+        "applied_weight_doc": alpha,
         "model_version": model_version,
         "api_version": api_version,
         "schema_version": schema_version,
@@ -370,6 +399,9 @@ async def recommend(req: RecommendRequest) -> RecommendResponse:
         reco_options=reco_options,
         P_rule=p_rule,
         P_vec=p_vec,
+        P_doc=p_doc,
+        doc_maturity_score=doc_maturity,
+        applied_weight_doc=alpha,
         context_hash=context_hash,
         model_version=model_version,
         api_version=api_version,

@@ -5,16 +5,27 @@
 
 ---
 
-## 2025-11-22 – Phase 1.5 Step2 (Diff Gatekeeper) 진행 중
+## 2025-11-22 – Phase 1.5 Step4 (Adaptive Scoring) 진행 중
 
-### 1. Step 2. Diff Ratio Calculation Logic (In Progress)
+### 0. Step 2. Diff Ratio Calculation Logic ✅
 - Schema K(`FullDocumentStore`, `api/app/schemas/document.py`) 정의: `blocks`, `latest_full_text`, `previous_full_text`, `diff_ratio`, `last_synced_at`, `schema_version` 등 v2.3 필드 정리.
 - Diff 계산 유틸(`api/app/utils/diff.py`) 추가: `calculate_diff_ratio(prev, curr)`가 Levenshtein 거리를 `max(len(prev), 1)`로 정규화하여 0~1 범위 비율을 반환.
-- 의존성: `api/requirements.txt`에 `python-Levenshtein` 추가.
+- 의존성: `api/requirements.txt`에 `python-Levenshtein` 추가 및 Standalone 테스트(`scripts/test_step2_diff.py`)로 "✅ Step 2 Diff Logic Passed" 확인.
 
-### 2. Standalone 테스트
-- 파일: `scripts/test_step2_diff.py`
-  - `prev="Hello", curr="Hello"` 등 3개 시나리오를 통해 diff ratio가 기대값을 만족하는지 검증. 성공 시 "✅ Step 2 Diff Logic Passed" 출력.
+### 1. Step 3. Macro ETL Service ✅
+- 파일: `api/app/services/macro_service.py`
+  - `.env` 로딩 및 `gemini-2.5-flash` 모델 호출 → LLM 응답 JSON을 정제/파싱하여 `DocumentContextCache`로 직렬화 후 Redis TTL 1시간으로 저장.
+- 파일: `scripts/test_step3_macro_llm.py`
+  - `AsyncMock`으로 LLM 응답을 패치하고 실제 Redis(`localhost:6379`)에 쓰기/읽기 검증. 성공 시 "✅ Step 3 Macro ETL Service Passed".
+
+### 2. Step 4. Adaptive Scoring Logic (In Progress)
+- 파일: `api/app/utils/scoring.py`
+  - `calculate_maturity_score()`로 문서 길이를 [0,1] 스케일링, `calculate_alpha()`로 도큐먼트 가중치 계산.
+- 파일: `api/app/main.py`
+  - `/recommend`에서 Redis `get_macro_context()`를 불러 `P_doc`을 구성하고, 문서 길이 기반 `doc_maturity_score` → `applied_weight_doc(alpha)`를 산출.
+  - 최종 점수는 `(1-α)·P_vec + α·P_doc`으로 평가하며, 응답 및 A/I 이벤트에 `P_doc`, `doc_maturity_score`, `applied_weight_doc` 필드를 추가.
+- 파일: `scripts/test_step4_scoring.py`
+  - 짧은/긴 텍스트 케이스와 벡터/도큐먼트 스코어 블렌딩을 검증하여 "✅ Step 4 Scoring Logic Passed" 출력.
 
 ---
 
