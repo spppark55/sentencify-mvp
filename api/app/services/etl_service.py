@@ -16,6 +16,9 @@ MONGO_DB_NAME = os.getenv("MONGO_DB_NAME", "sentencify")
 def _build_pipeline() -> List[Dict[str, Any]]:
     return [
         {
+            "$match": {"was_accepted": True}
+        },
+        {
             "$lookup": {
                 "from": "log_a_recommend",
                 "localField": "recommend_session_id",
@@ -75,15 +78,24 @@ def _parse_timestamp(entry: Optional[Dict[str, Any]]) -> float:
     return 0.0
 
 
-def _calc_consistency(log_a: Dict[str, Any], log_b: Dict[str, Any]) -> str:
+def _calc_consistency(log_a: Dict[str, Any], log_b: Dict[str, Any], log_c: Dict[str, Any]) -> str:
     if not log_a or not log_b:
         return "low"
+    
+    # 1. Check if source_recommend_event_id matches
+    if log_b.get("source_recommend_event_id") != log_a.get("insert_id"):
+        return "low"
+    if log_c.get("source_recommend_event_id") != log_a.get("insert_id"):
+        return "low"
+
+    # 2. Check time difference
     ts_a = _parse_timestamp(log_a)
     ts_b = _parse_timestamp(log_b)
     if ts_a == 0 or ts_b == 0:
         return "low"
-    if abs(ts_a - ts_b) > 60:
+    if abs(ts_a - ts_b) > 60: # a와 b 사이 간격이 60초 초과 시 low
         return "low"
+        
     return "high"
 
 
@@ -110,14 +122,22 @@ def run_etl_pipeline(mongo_client: MongoClient | None = None) -> int:
     training_examples = db["training_examples"]
 
     processed = 0
-    for row in log_c.aggregate(_build_pipeline()):
+    # Add was_accepted:true filter here for efficiency
+    pipeline = [{"$match": {"was_accepted": True}}] + _build_pipeline()
+    
+    for row in log_c.aggregate(pipeline):
         log_a = (row.get("log_a") or [None])[0]
         log_b = (row.get("log_b") or [None])[0]
         log_d = (row.get("log_d") or [None])[0]
         log_e = (row.get("log_e") or [None])[0]
         log_f = (row.get("log_f") or [None])[0]
 
-        consistency_flag = _calc_consistency(log_a or {}, log_b or {})
+        consistency_flag = _calc_consistency(log_a or {}, log_b or {}, row)
+        
+        # Rule 4.3: Use only high consistency data for training
+        if consistency_flag != "high":
+            continue
+
         example_id = row.get("recommend_session_id") or str(uuid.uuid4())
 
         reco_options = (log_a or {}).get("reco_options") or []

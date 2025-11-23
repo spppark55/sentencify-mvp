@@ -20,10 +20,13 @@ from app.prompts import build_paraphrase_prompt
 from app.qdrant.service import compute_p_vec
 from app.redis.client import get_macro_context
 from app.services.macro_service import analyze_and_cache_macro_context
+from app.services.classifier_service import ClassifierService
 from app.utils.embedding import get_embedding, embedding_service
 from app.utils.scoring import calculate_alpha, calculate_maturity_score
 
 load_dotenv()
+
+# ... (RecommendRequest definition omitted)
 
 class RecommendRequest(BaseModel):
     doc_id: str
@@ -108,11 +111,16 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def startup_event():
-    '''임베딩 모델 로딩'''
+    '''임베딩 모델 및 분류기 로딩'''
+    global _classifier_service
     print("Loading embedding model (klue/bert-base)")
     from app.utils.embedding import embedding_service
     embedding_service.load_model()
     print("Embedding model ready!")
+    
+    print("Loading KoBERT Classifier...")
+    _classifier_service = ClassifierService()
+    print("KoBERT Classifier ready!")
 
 LOG_DIR = Path("logs")
 KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
@@ -128,6 +136,7 @@ else:
 
 _kafka_producer: KafkaProducer | None = None
 _mongo_client: MongoClient | None = None
+_classifier_service: ClassifierService | None = None
 
 
 def get_kafka_producer() -> KafkaProducer | None:
@@ -302,7 +311,15 @@ async def recommend(req: RecommendRequest) -> RecommendResponse:
         macro_context = None
     print(f"[TRACE][recommend] macro_context={macro_context}", flush=True)
 
-    p_rule: Dict[str, float] = {"thesis": 0.5, "email": 0.3, "article": 0.2}
+    # P_rule Calculation
+    p_rule: Dict[str, float] = {}
+    if _classifier_service:
+        p_rule = _classifier_service.predict_p_rule(context_full)
+    else:
+        # Fallback stub if service not loaded
+        p_rule = {"thesis": 0.5, "email": 0.3, "article": 0.2}
+    
+    print(f"[TRACE][recommend] P_rule={p_rule}", flush=True)
 
     print(f"\n[DEBUG] 1. Input Context (Full):\n{context_full!r}", flush=True)
 

@@ -5,71 +5,6 @@
 
 ---
 
-## 2025-11-24 – Phase 2 Step5 (Analytics Dashboard) 진행 중
-
-### 1. Step 4. Vector DB Migration ✅
-- `api/app/services/vector_migration.py`에서 Schema H → Qdrant 업서트 파이프라인 완성, "real_user" payload 태그로 구분.
-- Standalone 테스트(`scripts/phase2_test_step4_migration.py`)로 컬렉션/필드 매핑 검증 → "✅ Phase 2 Step 4 Vector Migration Test Passed".
-
-### 2. Step 5. Streamlit Dashboard (In Progress)
-- `dashboard/` 모듈 신규 추가:
-  - `app.py` + `pages/` 구성으로 Phase 1/1.5/2 뷰 분리.
-  - `queries.py`에서 Mongo/Redis 연결, `@st.cache_data` 기반 KPI 질의(`get_total_traffic`, `get_macro_stats`, `get_golden_data_count` 등).
-  - `requirements.txt`, `Dockerfile` 작성 후 docker-compose에 `dashboard` 서비스 추가.
-- Streamlit 레이아웃:
-  - 메인 페이지: KPI, 카테고리 분포, Macro Gatekeeper 지표.
-  - Phase별 페이지: Plotly 차트와 Metric 컴포넌트 활용.
-- 백엔드 LLM 공급자를 Gemini 2.5 Flash → OpenAI `gpt-4.1-nano`로 이전하여 Macro ETL/Paraphrase 경로 및 테스트를 일괄 수정.
-- 문서 업데이트: `docs/phase2_test_lists.md`에 Step5 관련 항목 추가 예정(현 단계에서는 Step4까지 기록됨).
-
----
-
-## 2025-11-22 – Phase 1.5 Step4 (Adaptive Scoring) 완료 & Integration 진행 중
-
-### 0. Step 2. Diff Ratio Calculation Logic ✅
-- Schema K(`FullDocumentStore`, `api/app/schemas/document.py`) 정의: `blocks`, `latest_full_text`, `previous_full_text`, `diff_ratio`, `last_synced_at`, `schema_version` 등 v2.3 필드 정리.
-- Diff 계산 유틸(`api/app/utils/diff.py`) 추가: `calculate_diff_ratio(prev, curr)`가 Levenshtein 거리를 `max(len(prev), 1)`로 정규화하여 0~1 범위 비율을 반환.
-- 의존성: `api/requirements.txt`에 `python-Levenshtein` 추가 및 Standalone 테스트(`scripts/test_step2_diff.py`)로 "✅ Step 2 Diff Logic Passed" 확인.
-
-### 1. Step 3. Macro ETL Service ✅
-- 파일: `api/app/services/macro_service.py`
-  - `.env` 로딩 및 `gemini-2.5-flash` 모델 호출 → LLM 응답 JSON을 정제/파싱하여 `DocumentContextCache`로 직렬화 후 Redis TTL 1시간으로 저장.
-- 파일: `scripts/test_step3_macro_llm.py`
-  - `AsyncMock`으로 LLM 응답을 패치하고 실제 Redis(`localhost:6379`)에 쓰기/읽기 검증. 성공 시 "✅ Step 3 Macro ETL Service Passed".
-
-### 2. Step 4. Adaptive Scoring Logic ✅
-- 파일: `api/app/utils/scoring.py`
-  - `calculate_maturity_score()`로 문서 길이를 [0,1] 스케일링, `calculate_alpha()`로 도큐먼트 가중치 계산.
-- 파일: `api/app/main.py`
-  - `/recommend` 응답 및 A/I 이벤트에 `P_doc`, `doc_maturity_score`, `applied_weight_doc` 필드를 추가하고 `(1-α)·P_vec + α·P_doc` 가중 합 적용.
-- 파일: `scripts/test_step4_scoring.py`
-  - 짧은/긴 텍스트 케이스와 스코어 블렌딩을 검증하여 "✅ Step 4 Scoring Logic Passed" 출력.
-
-### 3. Integration Wiring & Testing (In Progress)
-- 파일: `api/app/main.py`
-  - `update_document` 엔드포인트에 `BackgroundTasks`를 도입하고 diff_ratio ≥ 0.10 시 `analyze_and_cache_macro_context()`를 비동기 호출하여 Macro ETL 파이프 연결.
-- 파일: `scripts/phase1.5_test_integration.py`
-  - 실제 API(`http://localhost:8000`)를 클라이언트로 호출하여 문서 생성 → 짧은 추천 → 긴 텍스트 패치로 diff 발생 → 대기 → 재추천을 통해 `P_doc`/`applied_weight_doc` 변화까지 검증하는 통합 시나리오 스크립트 작성.
-- 파일: `docs/phase1.5_test_lists.md`
-  - Step 4 테스트 완료 체크 및 "Integration: Full Cycle" 체크리스트를 추가.
-
----
-
-## 2025-11-19 – Phase 1.5 Step1 (Redis Schema F) 완료
-
-### 1. Step 1. Redis Infrastructure & Schema F ✅
-- Phase 1.5 Step 1을 완료하고, `docker-compose.mini.yml`의 `redis` 서비스/`api/requirements.txt`의 `redis` 패키지 존재를 재확인(추가 변경 없음).
-- Schema F(`DocumentContextCache`, `api/app/schemas/macro.py`)를 v2.3 필드( `macro_llm_version`, `schema_version` 등)로 정의.
-- Async Redis 클라이언트(`api/app/redis/client.py`): `get_redis_client()`, `set_macro_context()`, `get_macro_context()` 구현. 기본 호스트 `redis`, TTL 기본 3600초.
-
-### 2. Standalone 테스트 & Phase1.5 테스트 리스트
-- 파일: `scripts/test_step1_redis.py`
-  - `REDIS_HOST`/`REDIS_PORT` 환경변수로 접속 대상 지정 → Schema F 저장/조회 라운드트립 검증 후 "✅ Step 1 Redis Test Passed" 출력.
-- 파일: `docs/phase1.5_test_lists.md`
-  - 체크리스트 `Step 1: Redis Connection & Schema F Serialization` 완료 표시.
-
----
-
 ## 2025-11-18 – Phase1 Step1 E2E + Kafka 세팅
 
 ### 1. BE `/recommend` API 고도화 (Stub 기반)
@@ -738,6 +673,8 @@
     - 선택/컨텍스트/추천 상태를 초기화하여 새 문서로 전환.
   - `Sidebar`를 `userId`와 `onSelectDoc`을 넘겨 사용하는 형태로 변경.
 
+---
+
 ## 2025-11-19 – Phase 1.5 Step1 (Redis Schema F) 진행 중
 
 ### 1. Phase 1.5 착수
@@ -756,3 +693,110 @@
   - Phase 1.5 테스트 항목 시작 (`Redis Connection Test`, `Schema F Validation`).
 
 ---
+
+## 2025-11-19 – Phase 1.5 Step1 (Redis Schema F) 완료
+
+### 1. Step 1. Redis Infrastructure & Schema F ✅
+- Phase 1.5 Step 1을 완료하고, `docker-compose.mini.yml`의 `redis` 서비스/`api/requirements.txt`의 `redis` 패키지 존재를 재확인(추가 변경 없음).
+- Schema F(`DocumentContextCache`, `api/app/schemas/macro.py`)를 v2.3 필드( `macro_llm_version`, `schema_version` 등)로 정의.
+- Async Redis 클라이언트(`api/app/redis/client.py`): `get_redis_client()`, `set_macro_context()`, `get_macro_context()` 구현. 기본 호스트 `redis`, TTL 기본 3600초.
+
+### 2. Standalone 테스트 & Phase1.5 테스트 리스트
+- 파일: `scripts/test_step1_redis.py`
+  - `REDIS_HOST`/`REDIS_PORT` 환경변수로 접속 대상 지정 → Schema F 저장/조회 라운드트립 검증 후 "✅ Step 1 Redis Test Passed" 출력.
+- 파일: `docs/phase1.5_test_lists.md`
+  - 체크리스트 `Step 1: Redis Connection & Schema F Serialization` 완료 표시.
+
+---
+
+## 2025-11-22 – Phase 1.5 Step4 (Adaptive Scoring) 완료 & Integration 진행 중
+
+### 0. Step 2. Diff Ratio Calculation Logic ✅
+- Schema K(`FullDocumentStore`, `api/app/schemas/document.py`) 정의: `blocks`, `latest_full_text`, `previous_full_text`, `diff_ratio`, `last_synced_at`, `schema_version` 등 v2.3 필드 정리.
+- Diff 계산 유틸(`api/app/utils/diff.py`) 추가: `calculate_diff_ratio(prev, curr)`가 Levenshtein 거리를 `max(len(prev), 1)`로 정규화하여 0~1 범위 비율을 반환.
+- 의존성: `api/requirements.txt`에 `python-Levenshtein` 추가 및 Standalone 테스트(`scripts/test_step2_diff.py`)로 "✅ Step 2 Diff Logic Passed" 확인.
+
+### 1. Step 3. Macro ETL Service ✅
+- 파일: `api/app/services/macro_service.py`
+  - `.env` 로딩 및 `gemini-2.5-flash` 모델 호출 → LLM 응답 JSON을 정제/파싱하여 `DocumentContextCache`로 직렬화 후 Redis TTL 1시간으로 저장.
+- 파일: `scripts/test_step3_macro_llm.py`
+  - `AsyncMock`으로 LLM 응답을 패치하고 실제 Redis(`localhost:6379`)에 쓰기/읽기 검증. 성공 시 "✅ Step 3 Macro ETL Service Passed".
+
+### 2. Step 4. Adaptive Scoring Logic ✅
+- 파일: `api/app/utils/scoring.py`
+  - `calculate_maturity_score()`로 문서 길이를 [0,1] 스케일링, `calculate_alpha()`로 도큐먼트 가중치 계산.
+- 파일: `api/app/main.py`
+  - `/recommend` 응답 및 A/I 이벤트에 `P_doc`, `doc_maturity_score`, `applied_weight_doc` 필드를 추가하고 `(1-α)·P_vec + α·P_doc` 가중 합 적용.
+- 파일: `scripts/test_step4_scoring.py`
+  - 짧은/긴 텍스트 케이스와 스코어 블렌딩을 검증하여 "✅ Step 4 Scoring Logic Passed" 출력.
+
+### 3. Integration Wiring & Testing (In Progress)
+- 파일: `api/app/main.py`
+  - `update_document` 엔드포인트에 `BackgroundTasks`를 도입하고 diff_ratio ≥ 0.10 시 `analyze_and_cache_macro_context()`를 비동기 호출하여 Macro ETL 파이프 연결.
+- 파일: `scripts/phase1.5_test_integration.py`
+  - 실제 API(`http://localhost:8000`)를 클라이언트로 호출하여 문서 생성 → 짧은 추천 → 긴 텍스트 패치로 diff 발생 → 대기 → 재추천을 통해 `P_doc`/`applied_weight_doc` 변화까지 검증하는 통합 시나리오 스크립트 작성.
+- 파일: `docs/phase1.5_test_lists.md`
+  - Step 4 테스트 완료 체크 및 "Integration: Full Cycle" 체크리스트를 추가.
+
+---
+
+## 2025-11-24 – Phase 2 Step5 (Analytics Dashboard) 진행 중
+
+### 1. Step 4. Vector DB Migration ✅
+- `api/app/services/vector_migration.py`에서 Schema H → Qdrant 업서트 파이프라인 완성, "real_user" payload 태그로 구분.
+- Standalone 테스트(`scripts/phase2_test_step4_migration.py`)로 컬렉션/필드 매핑 검증 → "✅ Phase 2 Step 4 Vector Migration Test Passed".
+
+### 2. Step 5. Streamlit Dashboard (In Progress)
+- `dashboard/` 모듈 신규 추가:
+  - `app.py` + `pages/` 구성으로 Phase 1/1.5/2 뷰 분리.
+  - `queries.py`에서 Mongo/Redis 연결, `@st.cache_data` 기반 KPI 질의(`get_total_traffic`, `get_macro_stats`, `get_golden_data_count` 등).
+  - `requirements.txt`, `Dockerfile` 작성 후 docker-compose에 `dashboard` 서비스 추가.
+- Streamlit 레이아웃:
+  - 메인 페이지: KPI, 카테고리 분포, Macro Gatekeeper 지표.
+  - Phase별 페이지: Plotly 차트와 Metric 컴포넌트 활용.
+- 백엔드 LLM 공급자를 Gemini 2.5 Flash → OpenAI `gpt-4.1-nano`로 이전하여 Macro ETL/Paraphrase 경로 및 테스트를 일괄 수정.
+- 문서 업데이트: `docs/phase2_test_lists.md`에 Step5 관련 항목 추가 예정(현 단계에서는 Step4까지 기록됨).
+
+---
+
+## 2025-11-24 – Phase 2 Step 2 ETL Service: Implemented & Verified
+
+### 1. ETL Service Implementation (`api/app/services/etl_service.py`)
+- 로그(A, B, C)와 기업 데이터(D)를 `recommend_session_id` 기준으로 Join하는 Aggregation Pipeline을 개선했습니다.
+- `was_accepted: true`인 C로그만 학습 데이터로 사용하도록 필터링하고, `A.insert_id`와 `B/C.source_recommend_event_id`를 비교하는 일관성 검사 로직을 추가하여 데이터 정합성을 강화했습니다.
+
+### 2. Integration Test (`scripts/phase2_test_step2_etl.py`)
+- 기존 Mock 테스트를 실제 MongoDB에 연결하여 테스트하는 통합 테스트로 재작성했습니다.
+- 테스트 시나리오: Mock A/B/C/D 로그를 DB에 주입 → ETL 파이프라인 실행 → 최종 생성된 `training_examples`(Schema H) 데이터의 필드 값과 일관성을 검증합니다.
+- 테스트는 Docker 컨테이너 환경에서 실행해야 정상적으로 DB에 연결됩니다. (`docker-compose exec api python ...`)
+
+---
+
+## 2025-11-24 – Phase 2 Step 3 User Profile: Implemented & Verified
+
+### 1. User Profile Service (`api/app/services/profile_service.py`)
+- Schema G (`UserProfile`) 기반 프로필 생성 서비스 구현.
+- `training_examples`를 집계하여 `user_id` 단위로 프로필을 갱신.
+- 주요 지표 계산 로직:
+  - **Accept Rate**: 채택된 추천 / 전체 추천 횟수.
+  - **Embedding V1**: 채택된 기록의 `context_embedding` 평균(Mean Pooling) 계산. (Phase 3 Personalization 대비)
+  - **Preference Vectors**: `preferred_category_vector`, `preferred_strength_vector` (Tone) 분포 계산.
+- Schema Update: `user_embedding_v1` 필드(List[float])를 `UserProfile` 스키마에 추가.
+
+### 2. Service Verification (`scripts/phase2_test_step3_profile.py`)
+- Docker 컨테이너 내부 통합 테스트 스크립트 작성.
+- 검증 시나리오:
+  - 가상의 유저 로그 및 Training Examples (수락 3, 거절 2) 주입.
+  - `ProfileService.update_user_profile` 실행.
+  - 결과 검증: `recommend_accept_rate` (0.6), 임베딩 평균값, 카테고리 분포 벡터의 정확성 확인.
+- 결과: "✅ Phase 2 Step 3 User Profile Service Test Passed"
+
+## 2025-11-24 – Phase 2 Step 5 Dashboard Gap Analysis
+- **Analysis**: Compared `dashboard_spec.md` with current implementation.
+- **Findings**:
+    - **Missing Pages**: Phase 3 (User Insights), Phase 4 (Automation) pages are not created.
+    - **Query Gap**: Missing queries for Correction Funnel (Phase 2), Clustering/Embeddings (Phase 3), and Automation metrics (Phase 4).
+    - **Bug Found**: `get_user_profile_coverage` queries wrong collection `user_profile`; should be `users`.
+    - **Component Gap**: `dashboard/components/` directory missing; charts are not modularized.
+- **Next**: Fix query bug, implement missing queries, and add Phase 3/4 pages.
+- **Fix**: Phase 2 Dashboard Fix: Fixed collection name bug & Added Correction Funnel Chart.

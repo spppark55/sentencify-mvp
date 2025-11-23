@@ -1,115 +1,138 @@
-#!/usr/bin/env python
-"""
-Standalone verification for Phase 2 Step 2 (Training ETL Pipeline).
-
-Run: python scripts/phase2_test_step2_etl.py
-"""
-
-from __future__ import annotations
-
-from unittest.mock import MagicMock
-
 import sys
+import os
+import asyncio
 from pathlib import Path
+from datetime import datetime, timedelta
+from typing import List, Dict, Any
+from pymongo import MongoClient
 
-ROOT_DIR = Path(__file__).resolve().parents[1]
-API_DIR = ROOT_DIR / "api"
+# --- Path Setup ---
+BASE_DIR = Path(__file__).resolve().parents[1]  # /app
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
 
-if "pymongo" not in sys.modules:
-    pymongo_stub = MagicMock()
-    pymongo_stub.MongoClient = MagicMock()
-    sys.modules["pymongo"] = pymongo_stub
+# Import service function
+try:
+    from app.services.etl_service import run_etl_pipeline
+except ImportError as e:
+    print(f"[ERROR] Failed to import services: {e}")
+    sys.exit(1)
 
-if str(API_DIR) not in sys.path:
-    sys.path.insert(0, str(API_DIR))
+# --- Constants ---
+MONGO_URI = os.getenv("MONGO_URI", "mongodb://mongo:27017")
+MONGO_DB_NAME = os.getenv("MONGO_DB_NAME", "sentencify")
 
-from app.services.etl_service import run_etl_pipeline  # noqa: E402
+# --- Mock Data ---
+SESSION_ID = "test-session-etl-123"
+A_INSERT_ID = "a-log-insert-id-456"
+DOC_ID = "doc-abc-789"
+CONTEXT_HASH = "hash-def-456"
 
+# A: editor_recommend_options event
+MOCK_LOG_A = {
+    "insert_id": A_INSERT_ID,
+    "recommend_session_id": SESSION_ID,
+    "doc_id": DOC_ID,
+    "context_hash": CONTEXT_HASH,
+    "created_at": "2025-01-01T10:00:00Z",
+    "reco_options": [{"category": "email", "language": "ko", "intensity": "moderate"}],
+    "P_vec": {"email": 0.8, "report": 0.2},
+    "P_doc": {"email": 0.6, "report": 0.4},
+    "applied_weight_doc": 0.5,
+    "doc_maturity_score": 0.75,
+    "is_shadow_mode": False,
+}
 
-def make_mock_mongo():
-    log_c = MagicMock()
-    log_c.aggregate.return_value = [
-        {
-            "recommend_session_id": "session-1",
-            "doc_id": "doc-1",
-            "field": "email",
-            "was_accepted": True,
-            "context_hash": "hash-1",
-            "index": 0,
-            "log_a": [
-                {
-                    "created_at": "2025-01-01T00:00:00Z",
-                    "reco_options": [{"category": "email"}],
-                    "P_vec": {"email": 0.8},
-                    "P_doc": {"email": 0.6},
-                    "applied_weight_doc": 0.3,
-                    "doc_maturity_score": 0.9,
-                    "is_shadow_mode": False,
-                }
-            ],
-            "log_b": [
-                {
-                    "created_at": "2025-01-01T00:00:30Z",
-                    "tone": "polite",
-                    "llm_provider": "google",
-                    "response_time_ms": 150,
-                    "target_category": "email",
-                }
-            ],
-            "log_d": [
-                {
-                    "field": "email",
-                }
-            ],
-            "log_e": [
-                {
-                    "embedding": [0.1, 0.2, 0.3],
-                }
-            ],
-            "log_f": [
-                {
-                    "macro_category_hint": "email",
-                }
-            ],
-        }
-    ]
+# B: editor_run_paraphrasing event
+MOCK_LOG_B = {
+    "source_recommend_event_id": A_INSERT_ID,
+    "recommend_session_id": SESSION_ID,
+    "doc_id": DOC_ID,
+    "created_at": "2025-01-01T10:00:15Z",  # 15 seconds after A
+    "target_category": "email",
+    "tone": "formal",
+    "llm_provider": "google",
+    "response_time_ms": 250,
+}
 
-    training_examples = MagicMock()
-    db = {
-        "log_c_select": log_c,
-        "training_examples": training_examples,
-    }
+# C: editor_selected_paraphrasing event
+MOCK_LOG_C = {
+    "source_recommend_event_id": A_INSERT_ID,
+    "recommend_session_id": SESSION_ID,
+    "doc_id": DOC_ID,
+    "field": "email",
+    "was_accepted": True,
+    "index": 1,
+}
 
-    class DummyDB(dict):
-        def __getitem__(self, item):
-            if item in db:
-                return db[item]
-            mock_collection = MagicMock()
-            db[item] = mock_collection
-            return mock_collection
+# D: correction_history
+MOCK_LOG_D = {
+    "recommend_session_id": SESSION_ID,
+    "field": "email",
+    "input_sentence": "original text",
+    "output_sentences": ["candidate 1", "candidate 2"],
+    "selected_index": 1
+}
 
-    dummy_db = DummyDB()
+# --- Test Logic ---
+def run_tests():
+    print("\n>>> Starting ETL Pipeline Integration Test (Step 2)...")
+    
+    try:
+        client = MongoClient(MONGO_URI)
+        db = client[MONGO_DB_NAME]
+        
+        # 1. Cleanup previous test data
+        collections_to_clean = [
+            "log_a_recommend", "log_b_run", "log_c_select",
+            "correction_history", "training_examples"
+        ]
+        for col in collections_to_clean:
+            db[col].delete_many({"recommend_session_id": SESSION_ID}) # Clean only test data
+        print("🧼 Cleaned up test data.")
 
-    mongo_client = MagicMock()
-    mongo_client.__getitem__.return_value = dummy_db
-    return mongo_client, training_examples
+        # 2. Inject mock data
+        db["log_a_recommend"].insert_one(MOCK_LOG_A)
+        db["log_b_run"].insert_one(MOCK_LOG_B)
+        db["log_c_select"].insert_one(MOCK_LOG_C)
+        db["correction_history"].insert_one(MOCK_LOG_D)
+        print("💉 Injected mock data.")
+        
+        # 3. Run ETL pipeline
+        print("🚀 Running ETL pipeline...")
+        # Since run_etl_pipeline processes ALL data, we check if our count increases or if our specific ID exists.
+        # Ideally, we should use a test DB, but here we check for existence of our record.
+        run_etl_pipeline(mongo_client=client)
+        
+        # 4. Verification
+        result = db["training_examples"].find_one({"example_id": SESSION_ID})
+        
+        if result:
+            print("🔍 Verifying generated TrainingExample...")
+            assert result["consistency_flag"] == "high", "Consistency flag should be 'high'"
+            assert result["groundtruth_field"] == "email"
+            assert result["was_accepted"] is True
+            assert result["doc_id"] == DOC_ID
+            # P_vec check (simple dict comparison might be tricky due to float precision but usually works for exact values)
+            assert result["P_vec"]["email"] == 0.8
+            assert result["tone"] == MOCK_LOG_B["tone"]
+            assert result["selected_index"] == MOCK_LOG_C["index"]
+            
+            print("\n✅ Phase 2 Step 2 ETL Service Test Passed")
+        else:
+            print("\n❌ Test failed: TrainingExample was not created in the database.")
+            sys.exit(1)
 
-
-def run_tests() -> None:
-    mongo_client, training_examples = make_mock_mongo()
-    processed = run_etl_pipeline(mongo_client=mongo_client)
-
-    assert processed == 1, "ETL should process one training example"
-    assert training_examples.update_one.called, "Training examples collection not updated"
-    args, kwargs = training_examples.update_one.call_args
-    upsert_doc = kwargs.get("$set")
-    if upsert_doc is None and len(args) >= 2:
-        upsert_doc = args[1].get("$set")
-    assert upsert_doc is not None, "Upsert document missing"
-    assert upsert_doc["consistency_flag"] == "high", "Consistency flag should be high"
-
-    print("✅ Phase 2 Step 2 ETL Service Test Passed")
-
+    except Exception as e:
+        print(f"\n❌ Test failed with exception: {e}")
+        sys.exit(1)
+    finally:
+        # Cleanup
+        if 'client' in locals() and client:
+            # Optional: Clean up test data again? Maybe keep for inspection.
+            # db["log_a_recommend"].delete_many({"recommend_session_id": SESSION_ID})
+            # ...
+            client.close()
 
 if __name__ == "__main__":
     run_tests()

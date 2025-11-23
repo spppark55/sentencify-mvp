@@ -21,7 +21,10 @@ services:
       - qdrant
       - redis
     volumes:
-      - ../:/workspace
+      - ./api/app:/app/app
+      - ./scripts:/app/scripts
+      - ./api/train_data.csv:/app/train_data.csv
+      - ./models:/app/models
     networks:
       - sentencify-net
 

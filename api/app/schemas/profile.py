@@ -10,6 +10,7 @@ class UserProfile(BaseModel):
     user_id: str
     preferred_category_vector: List[float] = Field(default_factory=list)
     preferred_strength_vector: List[float] = Field(default_factory=list)
+    user_embedding_v1: List[float] = Field(default_factory=list)
     recommend_accept_rate: float = 0.0
     paraphrase_execution_count: int = 0
     updated_at: datetime = Field(default_factory=datetime.utcnow)

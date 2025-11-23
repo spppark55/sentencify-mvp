@@ -101,7 +101,7 @@ def get_acceptance_rate() -> float:
 
 @st.cache_data(ttl=300)
 def get_user_profile_coverage() -> int:
-    return _collection("user_profile").count_documents({})
+    return _collection("users").count_documents({})
 
 
 @st.cache_data(ttl=300)
@@ -109,3 +109,14 @@ def get_macro_etl_triggers() -> Dict[str, int]:
     total = _collection("full_document_store").count_documents({})
     triggered = _collection("full_document_store").count_documents({"diff_ratio": {"$gte": 0.1}})
     return {"total": total, "triggered": triggered}
+
+
+def get_correction_funnel() -> Dict[str, int]:
+    """
+    Calculates the funnel counts: View (A) -> Run (B) -> Accept (C).
+    """
+    return {
+        "view": _collection("log_a_recommend").count_documents({}),
+        "run": _collection("log_b_run").count_documents({}),
+        "accept": _collection("log_c_select").count_documents({"was_accepted": True})
+    }

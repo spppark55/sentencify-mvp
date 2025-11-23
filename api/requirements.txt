@@ -16,3 +16,4 @@ pandas
 openai
 python-dotenv
 python-Levenshtein
+numpy
