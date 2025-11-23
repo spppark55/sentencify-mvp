@@ -8,9 +8,7 @@ WORKDIR /app
 COPY api/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY api/app ./app
-COPY scripts /app/scripts
-COPY api/train_data.csv /app/train_data.csv
+COPY app ./app
 
 RUN chmod +x /app/scripts/entrypoint.sh
 
