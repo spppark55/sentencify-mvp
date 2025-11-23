@@ -15,3 +15,6 @@ bcrypt==4.0.1
 torch
 transformers
 pandas
+openai
+python-dotenv
+python-Levenshtein

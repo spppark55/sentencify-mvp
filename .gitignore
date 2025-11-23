@@ -11,3 +11,6 @@ venv/
 .venv/
 data/
 api/train_data.csv
+project_dir.txt
+.tmp.drive*
+models/*

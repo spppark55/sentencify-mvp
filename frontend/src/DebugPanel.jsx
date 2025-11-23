@@ -5,8 +5,14 @@ export default function DebugPanel({
   options,
   docId,
   recommendId,
+  scoringInfo = {},
 }) {
   const events = window.__eventLog || [];
+  const maturity = Math.min(
+    100,
+    Math.max(0, Math.round(((scoringInfo.doc_maturity_score ?? 0) * 100)))
+  );
+  const alpha = Number(scoringInfo.applied_weight_doc ?? 0);
 
   return (
     <div className="mt-4 border rounded p-3 text-xs bg-gray-50 max-w-full">
@@ -73,6 +79,47 @@ export default function DebugPanel({
           <pre className="whitespace-pre-wrap break-all text-[11px] leading-relaxed">
             {JSON.stringify(options, null, 2)}
           </pre>
+        </div>
+
+        <div className="border rounded p-2 col-span-2 max-w-full bg-white">
+          <div className="font-semibold text-gray-700 mb-2">
+            📊 Phase 1.5 Adaptive Scoring
+          </div>
+          <div className="mb-2">
+            <div className="flex items-center justify-between text-gray-600 text-sm mb-1">
+              <span>Document Maturity</span>
+              <span>{maturity}%</span>
+            </div>
+            <div className="w-full bg-gray-200 rounded-full h-2">
+              <div
+                className="h-2 bg-purple-500 rounded-full"
+                style={{ width: `${maturity}%` }}
+              />
+            </div>
+          </div>
+          <div className="text-sm text-gray-600 mb-2">
+            Macro Weight (α): <strong>{alpha.toFixed(2)}</strong>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+            <div className="border rounded p-2">
+              <div className="font-semibold text-gray-700 mb-1">Micro Score (P_vec)</div>
+              <pre className="whitespace-pre-wrap break-words text-[11px] leading-relaxed">
+                {JSON.stringify(scoringInfo.P_vec || {}, null, 2)}
+              </pre>
+            </div>
+            <div className="border rounded p-2">
+              <div className="font-semibold text-gray-700 mb-1">Macro Score (P_doc)</div>
+              <pre className="whitespace-pre-wrap break-words text-[11px] leading-relaxed">
+                {JSON.stringify(scoringInfo.P_doc || {}, null, 2)}
+              </pre>
+            </div>
+          </div>
+          <div className="border rounded p-2 mt-2">
+            <div className="font-semibold text-gray-700 mb-1">Legacy P_rule</div>
+            <pre className="whitespace-pre-wrap break-words text-[11px] leading-relaxed">
+              {JSON.stringify(scoringInfo.P_rule || {}, null, 2)}
+            </pre>
+          </div>
         </div>
       </div>
 

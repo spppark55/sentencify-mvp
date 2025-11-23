@@ -1,52 +1,29 @@
 import hashlib
 import json
 import os
+import traceback
 from pathlib import Path
-from typing import Dict, Optional, List
+from typing import Any, Dict, List, Optional
 import uuid
 from datetime import datetime, timezone
 
-from dotenv import load_dotenv
-import google.generativeai as genai
-from fastapi import FastAPI, HTTPException, Query, status
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
 from kafka import KafkaProducer
 from pydantic import BaseModel
+from pymongo import MongoClient
+from dotenv import load_dotenv
+from openai import AsyncOpenAI
+from .auth import auth_router
 
 from app.prompts import build_paraphrase_prompt
 from app.qdrant.service import compute_p_vec
+from app.redis.client import get_macro_context
+from app.services.macro_service import analyze_and_cache_macro_context
 from app.utils.embedding import get_embedding, embedding_service
-from pymongo import MongoClient
-from .auth import auth_router
+from app.utils.scoring import calculate_alpha, calculate_maturity_score
 
 load_dotenv()
-
-
-class CorrectRequest(BaseModel):
-    selected_text: str
-    field: Optional[str] = None
-    intensity: Optional[str] = None
-    language: Optional[str] = None
-
-
-class ParaphraseRequest(BaseModel):
-    """B 이벤트: editor_run_paraphrasing 요청"""
-    source_recommend_event_id: str
-    recommend_session_id: str
-    doc_id: str
-    user_id: str
-    context_hash: str
-    selected_text: str
-    target_category: str
-    target_language: Optional[str] = "ko"
-    target_intensity: Optional[str] = "moderate"
-
-
-class ParaphraseResponse(BaseModel):
-    """B 이벤트 응답: 교정된 문장 후보들"""
-    candidates: List[str]
-    event_id: str
-    recommend_session_id: str
 
 class RecommendRequest(BaseModel):
     doc_id: str
@@ -72,11 +49,35 @@ class RecommendResponse(BaseModel):
     reco_options: list[RecommendOption]
     P_rule: Dict[str, float]
     P_vec: Dict[str, float]
+    P_doc: Dict[str, float]
+    doc_maturity_score: float
+    applied_weight_doc: float
     context_hash: str
     model_version: str
     api_version: str
     schema_version: str
     embedding_version: str
+
+
+class ParaphraseRequest(BaseModel):
+    doc_id: str
+    user_id: str
+    selected_text: str
+    context_prev: Optional[str] = None
+    context_next: Optional[str] = None
+    category: Optional[str] = "general"
+    language: Optional[str] = "ko"
+    intensity: Optional[str] = "moderate"
+    style_request: Optional[str] = None
+    recommend_session_id: Optional[str] = None
+    source_recommend_event_id: Optional[str] = None
+
+
+class ParaphraseResponse(BaseModel):
+    candidates: List[str]
+
+
+
 
 
 class LogRequest(BaseModel):
@@ -87,6 +88,11 @@ class LogRequest(BaseModel):
 
 
 class CreateDocumentRequest(BaseModel):
+    user_id: str
+
+
+class UpdateDocumentRequest(BaseModel):
+    latest_full_text: str
     user_id: str
 
 
@@ -132,6 +138,12 @@ KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
 KAFKA_ENABLED = os.getenv("KAFKA_ENABLED", "true").lower() != "false"
 MONGO_URI = os.getenv("MONGO_URI", "mongodb://mongo:27017")
 MONGO_DB_NAME = os.getenv("MONGO_DB_NAME", "sentencify")
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+_openai_client: AsyncOpenAI | None = AsyncOpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
+if OPENAI_API_KEY:
+    print("[OpenAI] API key loaded from environment.")
+else:
+    print("[OpenAI] API key not found; paraphrase endpoint will use fallbacks.")
 
 _kafka_producer: KafkaProducer | None = None
 _mongo_client: MongoClient | None = None
@@ -189,6 +201,25 @@ def build_context_full(prev: Optional[str], selected: str, next_: Optional[str])
 def build_context_hash(doc_id: str, context_full: str) -> str:
     payload = f"{doc_id}:{context_full}"
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _fallback_candidates(selected_text: str) -> List[str]:
+    text = selected_text or ""
+    return [text, text, text]
+
+
+def _clean_candidates(raw_text: str, fallback: str) -> List[str]:
+    cleaned: List[str] = []
+    for line in raw_text.splitlines():
+        candidate = line.strip()
+        if not candidate:
+            continue
+        candidate = candidate.lstrip("0123456789.-•) ").strip()
+        if candidate:
+            cleaned.append(candidate)
+    while len(cleaned) < 3:
+        cleaned.append(fallback)
+    return cleaned[:3]
 
 
 def append_jsonl(filename: str, payload: Dict) -> None:
@@ -372,6 +403,26 @@ async def recommend(req: RecommendRequest) -> RecommendResponse:
 
     context_full = build_context_full(req.context_prev, req.selected_text, req.context_next)
     context_hash = build_context_hash(req.doc_id, context_full)
+    print(
+        "[TRACE][recommend] incoming request",
+        {
+            "doc_id": req.doc_id,
+            "user_id": req.user_id,
+            "selected_len": len(req.selected_text or ""),
+            "context_prev_len": len(req.context_prev or ""),
+            "context_next_len": len(req.context_next or ""),
+            "field": req.field,
+            "language": req.language,
+        },
+        flush=True,
+    )
+    try:
+        macro_context = await get_macro_context(req.doc_id)
+    except Exception as exc:
+        print(f"[Redis] Failed to load macro context: {exc}", flush=True)
+        traceback.print_exc()
+        macro_context = None
+    print(f"[TRACE][recommend] macro_context={macro_context}", flush=True)
 
     p_rule: Dict[str, float] = {"thesis": 0.5, "email": 0.3, "article": 0.2}
 
@@ -386,13 +437,39 @@ async def recommend(req: RecommendRequest) -> RecommendResponse:
         )
         p_vec = compute_p_vec(embedding, limit=15)
         print(f"[DEBUG] 4. Final P_vec Result: {p_vec}\n", flush=True)
+        print(f"[TRACE][recommend] P_vec_keys={list(p_vec.keys())}", flush=True)
     except Exception as e:
         print(f"[ERROR] P_vec calculation failed: {e}", flush=True)
+        traceback.print_exc()
         p_vec = {"thesis": 0.7, "email": 0.2, "article": 0.1}
-        
+
+    p_doc: Dict[str, float] = {}
+    if macro_context:
+        p_doc[macro_context.macro_category_hint] = 1.0
+
+    doc_text_for_len = (req.context_prev or "") + (req.selected_text or "") + (req.context_next or "")
+    doc_length = len(doc_text_for_len)
+    doc_maturity = calculate_maturity_score(doc_length)
+    alpha = calculate_alpha(doc_maturity)
+    print(
+        f"[TRACE][recommend] doc_length={doc_length} maturity={doc_maturity:.4f} alpha={alpha:.4f}",
+        flush=True,
+    )
+
+    score_categories = set(p_vec) | set(p_doc)
+    if not score_categories:
+        score_categories = set(p_rule)
+
+    RULE_WEIGHT = 0.3
+    vec_weight = (1 - RULE_WEIGHT) * (1 - alpha)
+    doc_weight = (1 - RULE_WEIGHT) * alpha
     final_scores: Dict[str, float] = {}
-    for k in set(p_rule) | set(p_vec):
-        final_scores[k] = 0.5 * p_rule.get(k, 0.0) + 0.5 * p_vec.get(k, 0.0)
+    for k in score_categories:
+        final_scores[k] = (
+            vec_weight * p_vec.get(k, 0.0)
+            + doc_weight * p_doc.get(k, 0.0)
+            + RULE_WEIGHT * p_rule.get(k, 0.0)
+        )
 
     best_category = max(final_scores, key=final_scores.get)
     language = req.language or "ko"
@@ -405,6 +482,11 @@ async def recommend(req: RecommendRequest) -> RecommendResponse:
             intensity=intensity,
         )
     ]
+    print(
+        "[TRACE][recommend] final reco_options",
+        [opt.model_dump() for opt in reco_options],
+        flush=True,
+    )
 
     model_version = "phase1_stub_v1"
     api_version = "v1"
@@ -425,6 +507,9 @@ async def recommend(req: RecommendRequest) -> RecommendResponse:
         "reco_options": [o.model_dump() for o in reco_options],
         "P_rule": p_rule,
         "P_vec": p_vec,
+        "P_doc": p_doc,
+        "doc_maturity_score": doc_maturity,
+        "applied_weight_doc": alpha,
         "model_version": model_version,
         "api_version": api_version,
         "schema_version": schema_version,
@@ -443,6 +528,9 @@ async def recommend(req: RecommendRequest) -> RecommendResponse:
         "context_hash": context_hash,
         "P_rule": p_rule,
         "P_vec": p_vec,
+        "P_doc": p_doc,
+        "doc_maturity_score": doc_maturity,
+        "applied_weight_doc": alpha,
         "model_version": model_version,
         "api_version": api_version,
         "schema_version": schema_version,
@@ -468,12 +556,74 @@ async def recommend(req: RecommendRequest) -> RecommendResponse:
         reco_options=reco_options,
         P_rule=p_rule,
         P_vec=p_vec,
+        P_doc=p_doc,
+        doc_maturity_score=doc_maturity,
+        applied_weight_doc=alpha,
         context_hash=context_hash,
         model_version=model_version,
         api_version=api_version,
         schema_version=schema_version,
         embedding_version=embedding_version,
     )
+
+
+@app.post("/paraphrase", response_model=ParaphraseResponse)
+async def paraphrase(req: ParaphraseRequest) -> ParaphraseResponse:
+    fallback_text = req.selected_text or ""
+    fallback_candidates = _fallback_candidates(fallback_text)
+    category = req.category or "general"
+    language = req.language or "ko"
+    intensity = req.intensity or "moderate"
+    event_id = str(uuid.uuid4())
+
+    b_event = {
+        "event": "editor_run_paraphrasing",
+        "event_id": event_id,
+        "source_recommend_event_id": req.source_recommend_event_id,
+        "recommend_session_id": req.recommend_session_id,
+        "doc_id": req.doc_id,
+        "user_id": req.user_id,
+        "selected_text": req.selected_text,
+        "context_prev": req.context_prev,
+        "context_next": req.context_next,
+        "target_category": category,
+        "target_language": language,
+        "target_intensity": intensity,
+        "style_request": req.style_request,
+        "created_at": _now_iso(),
+        "paraphrase_llm_version": "gpt-4.1-nano",
+    }
+    produce_b_event(b_event)
+
+    if _openai_client is None:
+        print("OPENAI_API_KEY is not configured. Returning fallback candidates.")
+        return ParaphraseResponse(candidates=fallback_candidates)
+
+    try:
+        prompt = build_paraphrase_prompt(
+            selected_text=req.selected_text,
+            category=category,
+            intensity=intensity,
+            language=language,
+            style_request=req.style_request,
+            context_prev=req.context_prev,
+            context_next=req.context_next,
+        )
+        response = await _openai_client.chat.completions.create(
+            model="gpt-4.1-nano",
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant."},
+                {"role": "user", "content": prompt},
+            ],
+        )
+        raw_text = (
+            response.choices[0].message.content if response.choices else ""
+        ) or ""
+        candidates = _clean_candidates(raw_text, fallback_text)
+        return ParaphraseResponse(candidates=candidates)
+    except Exception as exc:
+        print(f"[OpenAI] Error during chat completion: {exc}")
+        return ParaphraseResponse(candidates=fallback_candidates)
 
 
 @app.post("/log")
@@ -594,3 +744,44 @@ async def create_document(req: CreateDocumentRequest) -> Dict[str, Any]:
     collection.insert_one(doc)
 
     return {"doc_id": doc_id, "created_at": now}
+
+
+@app.patch("/documents/{doc_id}")
+async def update_document(
+    doc_id: str, req: UpdateDocumentRequest, background_tasks: BackgroundTasks
+) -> Dict[str, Any]:
+    if not req.user_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="user_id is required",
+        )
+
+    collection = get_mongo_collection("full_document_store")
+    existing = collection.find_one({"doc_id": doc_id, "user_id": req.user_id})
+    if not existing:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="document not found",
+        )
+    prev_text = existing.get("latest_full_text") or ""
+    curr_text = req.latest_full_text or ""
+    len_prev = len(prev_text)
+    len_curr = len(curr_text)
+    denominator = max(len_prev, 1)
+    diff_ratio = abs(len_curr - len_prev) / denominator
+    now = _now_iso()
+    collection.update_one(
+        {"_id": existing["_id"]},
+        {
+            "$set": {
+                "latest_full_text": curr_text,
+                "previous_full_text": prev_text,
+                "diff_ratio": diff_ratio,
+                "last_synced_at": now,
+            }
+        },
+    )
+    if diff_ratio >= 0.10 and curr_text:
+        print(f"[Macro] Triggering Macro ETL for doc_id={doc_id} diff_ratio={diff_ratio:.3f}")
+        background_tasks.add_task(analyze_and_cache_macro_context, doc_id, curr_text)
+    return {"doc_id": doc_id, "status": "updated"}

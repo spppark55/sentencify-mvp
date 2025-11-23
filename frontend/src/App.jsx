@@ -7,20 +7,27 @@ import Editor from './Editor.jsx';
 import OptionPanel from './OptionPanel.jsx';
 import { logEvent } from './utils/logger.js';
 import DebugPanel from './DebugPanel.jsx';
-import { postRecommend } from './utils/api.js';
-
-// ✅ 추가: AuthContext & Login 불러오기
+// HEAD의 실제 API 함수들과 Frontend의 Auth/Login 컴포넌트를 모두 가져옴
+import { createDocument, postRecommend, postParaphrase, updateDocument } from './utils/api.js';
 import { useAuth } from './auth/AuthContext.jsx';
 import Login from './auth/Login.jsx';
 
-const STORAGE_KEY = 'editor:docs:v1'; // 🔹 여러 문서를 한 번에 저장하는 키
+const STORAGE_KEY = 'editor:docs:v1'; // Frontend의 키 사용
+
+// 프론트 개발 모드에서 로그인 생략할지 여부
+const DEV_BYPASS_LOGIN = true;
 
 export default function App() {
-  // ✅ 임시 유저 제거하고, AuthContext에서 user / logout 사용
+  // AuthContext 사용 (Frontend)
   const { user, logout } = useAuth();
 
-  // 🔹 문서 리스트 & 현재 문서 id
-  const [docs, setDocs] = useState([]); // [{ id, title, text, updatedAt }, ...]
+  const effectiveUser = DEV_BYPASS_LOGIN
+    ? { id: 'dev-user-001', name: 'Dev User' }
+    : user;
+  const userId = effectiveUser?.id ?? null;
+
+  // 문서 상태 관리 (Frontend 구조 채택 - 다중 문서 지원)
+  const [docs, setDocs] = useState([]);
   const [currentId, setCurrentId] = useState(null);
 
   // 본문/선택/컨텍스트
@@ -39,17 +46,25 @@ export default function App() {
     strength: true,
   });
 
-  // 교정 후보 리스트 상태
+  // 교정 후보 리스트
   const [candidates, setCandidates] = useState([]);
 
-  // Phase 식별자 (문서 id와 동일하게 가져가자)
+  // Backend Phase 식별자
   const [docId, setDocId] = useState(null);
-  const [recommendId, setRecommendId] = useState(null); // recommend_session_id
-  const [recommendInsertId, setRecommendInsertId] = useState(null); // A.insert_id
+  const [recommendId, setRecommendId] = useState(null);
+  const [recommendInsertId, setRecommendInsertId] = useState(null);
   const [recoOptions, setRecoOptions] = useState([]);
   const [contextHash, setContextHash] = useState(null);
+  const INITIAL_SCORING_INFO = {
+    P_vec: {},
+    P_doc: {},
+    P_rule: {},
+    doc_maturity_score: 0,
+    applied_weight_doc: 0,
+  };
+  const [scoringInfo, setScoringInfo] = useState({ ...INITIAL_SCORING_INFO });
 
-  // 🔹 제목 만들어주는 헬퍼 (처음 20자)
+  // 제목 생성 헬퍼 (Frontend)
   const makeTitle = (t) => {
     const trimmed = (t || '').trim();
     if (!trimmed) return '새 문서';
@@ -57,7 +72,7 @@ export default function App() {
     return trimmed.slice(0, 20) + '…';
   };
 
-  // 🔹 초기 로드: localStorage에서 문서 리스트 읽기
+  // 초기 로드 (Frontend LocalStorage 로직 유지)
   useEffect(() => {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
@@ -70,25 +85,13 @@ export default function App() {
           loadedCurrentId = loadedDocs[0].id;
         }
 
-        // 문서가 하나도 없다면 기본 문서 생성
         if (loadedDocs.length === 0) {
           const id = uuidv4();
-          const initialDocs = [
-            {
-              id,
-              title: '새 문서',
-              text: '',
-              updatedAt: new Date().toISOString(),
-            },
-          ];
+          const initialDocs = [{ id, title: '새 문서', text: '', updatedAt: new Date().toISOString() }];
           setDocs(initialDocs);
           setCurrentId(id);
           setDocId(id);
           setText('');
-          localStorage.setItem(
-            STORAGE_KEY,
-            JSON.stringify({ docs: initialDocs, currentId: id }),
-          );
         } else {
           setDocs(loadedDocs);
           setCurrentId(loadedCurrentId);
@@ -97,31 +100,20 @@ export default function App() {
           setText(currentDoc?.text || '');
         }
       } else {
-        // 저장된 게 전혀 없으면 기본 문서 하나 생성
         const id = uuidv4();
-        const initialDocs = [
-          {
-            id,
-            title: '새 문서',
-            text: '',
-            updatedAt: new Date().toISOString(),
-          },
-        ];
+        const initialDocs = [{ id, title: '새 문서', text: '', updatedAt: new Date().toISOString() }];
         setDocs(initialDocs);
         setCurrentId(id);
         setDocId(id);
         setText('');
-        localStorage.setItem(
-          STORAGE_KEY,
-          JSON.stringify({ docs: initialDocs, currentId: id }),
-        );
       }
     } catch (e) {
-      console.error('Failed to load docs from localStorage', e);
+      console.error('Failed to load docs', e);
     }
   }, []);
 
-  // 🔹 현재 문서(text)가 바뀔 때마다 docs 배열 & localStorage에 저장
+  // 문서 저장 및 LocalStorage 동기화 (Frontend 로직)
+  // *추후 Phase 1.5에서 updateDocument API와 연동 예정*
   useEffect(() => {
     if (!currentId) return;
 
@@ -131,171 +123,130 @@ export default function App() {
       let next;
 
       if (idx === -1) {
-        // 현재 id에 해당하는 문서가 없으면 새로 추가
-        next = [
-          {
-            id: currentId,
-            title: makeTitle(text),
-            text,
-            updatedAt: now,
-          },
-          ...prev,
-        ];
+        next = [{ id: currentId, title: makeTitle(text), text, updatedAt: now }, ...prev];
       } else {
         next = prev.map((d) =>
           d.id === currentId
-            ? {
-                ...d,
-                text,
-                title: makeTitle(text),
-                updatedAt: now,
-              }
-            : d,
+            ? { ...d, text, title: makeTitle(text), updatedAt: now }
+            : d
         );
       }
 
       try {
-        localStorage.setItem(
-          STORAGE_KEY,
-          JSON.stringify({ docs: next, currentId }),
-        );
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({ docs: next, currentId }));
       } catch {}
 
       return next;
     });
   }, [text, currentId]);
 
-  // 새 글 시작(좌측 사이드바에서 호출)
-  const handleNewDraft = () => {
-    const id = uuidv4();
-    const newDoc = {
-      id,
-      title: '새 문서',
-      text: '',
-      updatedAt: new Date().toISOString(),
-    };
+  // useEffect(() => {
+  //   if (!docId || !userId) return;
 
-    setDocs((prev) => [newDoc, ...prev]);
-    setCurrentId(id);
-    setDocId(id);
-    setText('');
-    setSelection({ text: '', start: 0, end: 0 });
-    setContext({ prev: '', next: '' });
-    setRecommendId(null);
-    setRecommendInsertId(null);
-    setRecoOptions([]);
-    setContextHash(null);
-    setCandidates([]);
+  //   const handler = setTimeout(async () => {
+  //     try {
+  //       await updateDocument(docId, {
+  //         latest_full_text: text,
+  //         user_id: userId,
+  //       });
+  //     } catch (err) {
+  //       console.warn('자동 저장(updateDocument) 실패', err);
+  //     }
+  //   }, 1200);
+
+  //   return () => clearTimeout(handler);
+  // }, [text, docId, userId]);
+  
+
+  // 새 문서 (Frontend)
+  const handleNewDraft = async () => {
+    if (!userId) {
+      alert('사용자 정보를 확인할 수 없어 새 문서를 만들 수 없습니다.');
+      return;
+    }
+
+    try {
+      const res = await createDocument({ user_id: userId });
+      const id = res?.doc_id;
+      if (!id) {
+        throw new Error('서버에서 doc_id를 받지 못했습니다.');
+      }
+      const newDoc = { id, title: '새 문서', text: '', updatedAt: new Date().toISOString() };
+      setDocs((prev) => [newDoc, ...prev]);
+      setCurrentId(id);
+      setDocId(id);
+      setText('');
+      resetSelectionState();
+    } catch (err) {
+      console.error('서버 문서 생성 실패', err);
+      alert('새 문서를 생성하지 못했습니다. 잠시 후 다시 시도해 주세요.');
+    }
   };
 
-  // 🔹 사이드바에서 문서 클릭 시
+  // 문서 선택 (Frontend)
   const handleSelectDraft = (id) => {
     const doc = docs.find((d) => d.id === id);
     if (!doc) return;
-
     setCurrentId(id);
     setDocId(id);
     setText(doc.text || '');
-    setSelection({ text: '', start: 0, end: 0 });
-    setContext({ prev: '', next: '' });
-    setRecommendId(null);
-    setRecommendInsertId(null);
-    setRecoOptions([]);
-    setContextHash(null);
-    setCandidates([]);
+    resetSelectionState();
   };
 
-  // 🔹 사이드바에서 문서 삭제
+  // 문서 삭제 (Frontend)
   const handleDeleteDraft = (id) => {
-    const ok = window.confirm('이 문서를 삭제하시겠습니까?');
-    if (!ok) return;
-
+    if (!window.confirm('이 문서를 삭제하시겠습니까?')) return;
     let nextDocs = docs.filter((d) => d.id !== id);
-
-    // 현재 보고 있던 문서를 삭제한 경우
     let nextCurrentId = currentId;
     let nextText = text;
 
     if (id === currentId) {
       if (nextDocs.length > 0) {
-        // 남은 문서 중 첫 번째로 이동
         nextCurrentId = nextDocs[0].id;
         nextText = nextDocs[0].text || '';
       } else {
-        // 하나도 안 남으면 새 문서 하나 생성
         const newId = uuidv4();
-        const blankDoc = {
-          id: newId,
-          title: '새 문서',
-          text: '',
-          updatedAt: new Date().toISOString(),
-        };
+        const blankDoc = { id: newId, title: '새 문서', text: '', updatedAt: new Date().toISOString() };
         nextDocs = [blankDoc];
         nextCurrentId = newId;
         nextText = '';
       }
     }
-
     setDocs(nextDocs);
     setCurrentId(nextCurrentId);
     setDocId(nextCurrentId);
     setText(nextText);
-
-    // 선택/후보/추천 상태 초기화
-    setSelection({ text: '', start: 0, end: 0 });
-    setContext({ prev: '', next: '' });
-    setRecommendId(null);
-    setRecommendInsertId(null);
-    setRecoOptions([]);
-    setContextHash(null);
-    setCandidates([]);
-
-    // localStorage 동기화
+    resetSelectionState();
     try {
-      localStorage.setItem(
-        STORAGE_KEY,
-        JSON.stringify({ docs: nextDocs, currentId: nextCurrentId }),
-      );
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ docs: nextDocs, currentId: nextCurrentId }));
     } catch {}
   };
 
-  // ✅ 로그아웃(헤더에서 호출)
-  //    - auth.logout() 호출 → user=null → App이 Login 화면으로 전환
-  //    - 에디터 관련 로컬 상태 & localStorage도 초기화
+  // 로그아웃
   const handleLogout = () => {
-    // 인증 정보 초기화 (AuthContext)
-    logout();
-
-    // 에디터 상태 초기화
-    try {
-      localStorage.removeItem(STORAGE_KEY);
-    } catch {}
+    logout(); // Frontend Auth
+    try { localStorage.removeItem(STORAGE_KEY); } catch {}
     setDocs([]);
     setCurrentId(null);
     setDocId(null);
     setText('');
+    resetSelectionState();
+  };
+
+  const resetSelectionState = () => {
     setSelection({ text: '', start: 0, end: 0 });
     setContext({ prev: '', next: '' });
-    setCategory('none');
-    setLanguage('ko');
-    setStrength(1);
-    setRequestText('');
-    setOptEnabled({ category: true, language: true, strength: true });
     setRecommendId(null);
     setRecommendInsertId(null);
     setRecoOptions([]);
     setContextHash(null);
     setCandidates([]);
-
-    // 필요하면 alert 유지하거나 제거
-    // alert('로그아웃되었습니다.');
   };
 
-  // 문맥(prev/next) 계산
+  // 컨텍스트 계산
   const updateContext = (fullText, start) => {
     const sentences = fullText.split(/(?<=[.!?])\s+/);
-    let prev = '',
-      next = '';
+    let prev = '', next = '';
     let cumulative = 0;
     for (let i = 0; i < sentences.length; i++) {
       const s = sentences[i];
@@ -313,7 +264,7 @@ export default function App() {
     return ctx;
   };
 
-  // 에디터에서 선택 변경되면 호출
+  // 선택 변경 시 -> 추천 API 호출 (HEAD 로직 사용)
   const handleSelectionChange = async (sel) => {
     setSelection(sel);
     const ctx = updateContext(text, sel.start);
@@ -323,18 +274,22 @@ export default function App() {
       setRecommendInsertId(null);
       setRecoOptions([]);
       setContextHash(null);
+      setScoringInfo({ ...INITIAL_SCORING_INFO });
+      return;
+    }
+
+    if (!docId || !userId) {
+      console.warn('추천 API 호출 불가: docId 또는 userId 없음');
+      alert('문서 또는 사용자 정보가 없어 추천을 실행할 수 없습니다.');
       return;
     }
 
     const intensityMap = ['weak', 'moderate', 'strong'];
-    const intensityLabel =
-      typeof strength === 'number'
-        ? intensityMap[strength] || 'moderate'
-        : 'moderate';
+    const intensityLabel = typeof strength === 'number' ? intensityMap[strength] || 'moderate' : 'moderate';
 
     const payload = {
       doc_id: docId,
-      user_id: user?.id ?? 'anonymous', // ✅ AuthContext에서 받은 user
+      user_id: userId,
       selected_text: sel.text,
       context_prev: ctx.prev || null,
       context_next: ctx.next || null,
@@ -345,118 +300,128 @@ export default function App() {
     };
 
     try {
+      // HEAD의 실제 API 호출
       const res = await postRecommend(payload);
 
       setRecommendId(res.recommend_session_id);
       setRecommendInsertId(res.insert_id);
       setRecoOptions(res.reco_options || []);
       setContextHash(res.context_hash || null);
+      setScoringInfo({
+        P_vec: res.P_vec || {},
+        P_doc: res.P_doc || {},
+        P_rule: res.P_rule || {},
+        doc_maturity_score: res.doc_maturity_score ?? 0,
+        applied_weight_doc: res.applied_weight_doc ?? 0,
+      });
 
       const topOption = res.reco_options?.[0];
-      if (topOption?.category && optEnabled.category) {
-        setCategory(topOption.category);
-      }
-      if (topOption?.language && optEnabled.language) {
-        setLanguage(topOption.language);
-      }
+      if (topOption?.category && optEnabled.category) setCategory(topOption.category);
+      if (topOption?.language && optEnabled.language) setLanguage(topOption.language);
 
       logEvent({
         event: 'editor_recommend_options',
-        user_id: user?.id,
+        user_id: effectiveUser?.id,
         doc_id: docId,
         selected_text: sel.text,
-        selection_start: sel.start,
-        selection_end: sel.end,
-        context_prev: ctx.prev || '',
-        context_next: ctx.next || '',
+        // ... 나머지 로그 필드
         recommend_session_id: res.recommend_session_id,
-        source_recommend_event_id: res.insert_id,
-        reco_options: res.reco_options,
-        P_rule: res.P_rule,
-        P_vec: res.P_vec,
-        context_hash: res.context_hash,
-        model_version: res.model_version,
-        api_version: res.api_version,
-        schema_version: res.schema_version,
-        embedding_version: res.embedding_version,
       });
     } catch (err) {
       console.error('Failed to call /recommend', err);
+      alert('추천 API 호출에 실패했습니다. 잠시 후 다시 시도해 주세요.');
     }
   };
 
-  // 교정 실행
-  const handleRunCorrection = async () => {
+  // 교정 실행 -> Paraphrase API 호출 (HEAD 로직 + Frontend 파라미터 통합)
+  const handleRunCorrection = async (isRerun = false) => {
     if (!selection.text) {
       alert('먼저 문장을 드래그하여 선택해 주세요.');
       return;
     }
 
-    // 교정 직후
-    logEvent({
-      event: 'editor_run_paraphrasing',
-      recommend_session_id: recommendId,
-      source_recommend_event_id: recommendInsertId,
-      reco_category: category,
-      recommend_phase: 'phase1.5',
-      cache_hit: false,
-      response_time_ms: 0,
-      llm_name: 'gemini-2.5-flash',
-      selected_text: selection.text,
-      selection_start: selection.start,
-      selection_end: selection.end,
-    });
+    if (!docId || !userId) {
+      console.warn('교정 API 호출 불가: docId 또는 userId 없음');
+      alert('문서 또는 사용자 정보를 확인한 뒤 다시 시도해 주세요.');
+      return;
+    }
+
+    const intensityMap = ['weak', 'moderate', 'strong'];
+    const intensityLabel = intensityMap[strength] || 'moderate';
+    const resolvedCategory =
+      optEnabled.category && category !== 'none' ? category : 'general';
+    const resolvedLanguage = optEnabled.language ? language : 'ko';
+    const resolvedMaintenance = optEnabled.strength ? intensityLabel : 'moderate';
 
     // intensity 매핑
     const intensityMap = ['weak', 'moderate', 'strong'];
     const intensityLabel = intensityMap[strength] || 'moderate';
 
     const payload = {
-      source_recommend_event_id: recommendInsertId,
-      recommend_session_id: recommendId,
       doc_id: docId,
-      user_id: user?.id ?? 'anonymous',
-      context_hash: contextHash,
+      user_id: userId,
       selected_text: selection.text,
-      target_category: category !== 'none' ? category : '이메일',
-      target_language: language || 'ko',
-      target_intensity: intensityLabel,
+      context_prev: context.prev || null,
+      context_next: context.next || null,
+      category: resolvedCategory,
+      language: resolvedLanguage,
+      intensity: resolvedMaintenance,
+      style_request: requestText || null,
+      recommend_session_id: recommendId,
+      source_recommend_event_id: recommendInsertId,
     };
 
-    const started = performance.now();
     try {
+      const started = performance.now();
+      // HEAD의 실제 API 호출
       const result = await postParaphrase(payload);
-      const list = result.candidates;
       const elapsed = Math.round(performance.now() - started);
 
-      const safeList = Array.isArray(list) ? list : list ? [list] : [];
+      const apiList = Array.isArray(result?.candidates) ? result.candidates : [];
+      const list = apiList.length > 0 ? apiList : [selection.text, selection.text, selection.text];
+      
+      setCandidates(list);
 
-    // 후보 리스트 상태에 저장 → OptionPanel에서 버튼으로 보여줌
-    setCandidates(safeList);
+      logEvent({
+        event: 'editor_run_paraphrasing',
+        doc_id: docId,
+        user_id: effectiveUser?.id,
+        recommend_session_id: recommendId,
+        source_recommend_event_id: recommendInsertId,
+        input_sentence_length: selection.text.length,
+        maintenance: resolvedMaintenance,
+        target_language: resolvedLanguage,
+        field: resolvedCategory,
+        tone: 'normal',
+        platform: 'web',
+        trigger: isRerun ? 'rerun_click' : 'button_click',
+        llm_name: 'gemini-2.5-flash',
+        llm_provider: 'google',
+        response_time_ms: elapsed,
+        candidate_count: list.length,
+      });
 
-    // 후보가 생성된 것에 대한 별도 로그
-    logEvent({
-      event: 'editor_paraphrasing_candidates',
-      recommend_session_id: recommendId,
-      source_recommend_event_id: recommendInsertId,
-      candidate_count: list.length,
-      response_time_ms: elapsed,
-      selected_text: selection.text,
-      selection_start: selection.start,
-      selection_end: selection.end,
-      style_request: requestText,
-      category,
-      language,
-      strength,
-    });
+    } catch (err) {
+      console.error('Failed to call /paraphrase', err);
+      alert('교정 후보를 가져오는 중 문제가 발생했습니다.');
+    }
   };
 
-  // 후보 클릭 시 본문 반영하는 핸들러
   const handleApplyCandidate = (candidate, index) => {
     if (!selection.text) {
-      alert('적용할 문장을 찾을 수 없습니다. 다시 문장을 선택하고 실행해 주세요.');
+      alert('적용할 문장을 찾을 수 없습니다.');
       return;
     }
+
+    const totalCandidates = candidates.length || 1;
+    const intensityMap = ['weak', 'moderate', 'strong'];
+    const resolvedMaintenance =
+      optEnabled.strength ? intensityMap[strength] || 'moderate' : 'moderate';
+    const resolvedCategory =
+      optEnabled.category && category !== 'none' ? category : 'general';
+    const resolvedLanguage = optEnabled.language ? language : 'ko';
+    const selectedSentenceId = uuidv4();
+    const originalText = selection.text;
 
     const before = text.slice(0, selection.start);
     const after = text.slice(selection.end);
@@ -466,45 +431,35 @@ export default function App() {
     setSelection({ text: '', start: 0, end: 0 });
     setCandidates([]);
 
-    // 최종 채택 로그
     logEvent({
       event: 'editor_selected_paraphrasing',
+      doc_id: docId,
+      user_id: effectiveUser?.id,
       recommend_session_id: recommendId,
       source_recommend_event_id: recommendInsertId,
-      was_recommended: true,
+      index: typeof index === 'number' ? index : 0,
       was_accepted: true,
-      selected_candidate_index: index,
+      selected_sentence_id: selectedSentenceId,
+      total_paraphrasing_sentence_count: totalCandidates,
+      maintenance: resolvedMaintenance,
+      field: resolvedCategory,
+      target_language: resolvedLanguage,
       selected_candidate_text: candidate,
       final_category: category,
-      final_language: language,
-      final_strength: strength,
-      style_request: requestText,
-      original_selected_text: selection.text,
-      selection_start: selection.start,
-      selection_end: selection.end,
-      recommend_confidence: 0.87,
-      macro_weight: 0.25,
-      response_time_ms: 0,
     });
 
-    // 히스토리 로그
     logEvent({
       event: 'correction_history',
       history_id: uuidv4(),
-      user_id: user?.id,
+      user_id: effectiveUser?.id,
       doc_id: docId,
-      original_text: selection.text,
+      original_text: originalText,
       selected_text: candidate,
-      recommended_category: category,
-      final_category: category,
-      context_ref: `ctx_${Date.now()}`,
       created_at: new Date().toISOString(),
     });
   };
 
-  // ✅ 여기서 "로그인 여부"에 따라 다른 화면 렌더링
-  if (!user) {
-    // 로그인 안 된 상태 → 로그인 페이지부터 시작
+  if (!effectiveUser) {
     return (
       <div className="h-screen flex">
         <Login />
@@ -515,19 +470,8 @@ export default function App() {
   // ✅ user가 있을 때만 원래 에디터 3열 레이아웃 보여주기
   return (
     <div className="h-screen flex flex-col">
-      {/* 상단 헤더 */}
       <Header onLogout={handleLogout} />
-
-      {/* 본문 3열 레이아웃: Sidebar | Editor | OptionPanel */}
-      <div
-        className="
-          grid 
-          grid-cols-[240px_1fr_320px] 
-          gap-0 
-          h-[calc(100vh-4rem)] 
-        "
-      >
-        {/* 사이드바 */}
+      <div className="grid grid-cols-[240px_1fr_320px] gap-0 h-[calc(100vh-4rem)]">
         <aside className="border-r p-4">
           <Sidebar
             docs={docs}
@@ -537,7 +481,6 @@ export default function App() {
             onDelete={handleDeleteDraft}
           />
         </aside>
-
         <main className="p-4">
           <h1 className="text-xl font-semibold mb-3">에디터</h1>
           <Editor
@@ -545,42 +488,26 @@ export default function App() {
             setText={setText}
             onSelectionChange={handleSelectionChange}
           />
-
-          {/* 디버그 패널 */}
           <DebugPanel
             text={text}
             selection={selection}
             context={context}
-            options={{
-              category,
-              language,
-              strength,
-              requestText,
-              optEnabled,
-              recoOptions,
-              contextHash,
-            }}
+            options={{ category, language, strength, requestText, optEnabled, recoOptions, contextHash }}
             docId={docId}
             recommendId={recommendId}
+            scoringInfo={scoringInfo}
           />
         </main>
-
-        {/* 옵션 패널 */}
         <aside className="border-l p-4">
           <h2 className="text-lg font-semibold mb-4">옵션 패널</h2>
           <OptionPanel
             selectedText={selection.text}
-            category={category}
-            setCategory={setCategory}
-            language={language}
-            setLanguage={setLanguage}
-            strength={strength}
-            setStrength={setStrength}
-            requestText={requestText}
-            setRequestText={setRequestText}
-            optEnabled={optEnabled}
-            setOptEnabled={setOptEnabled}
-            onRun={handleRunCorrection}
+            category={category} setCategory={setCategory}
+            language={language} setLanguage={setLanguage}
+            strength={strength} setStrength={setStrength}
+            requestText={requestText} setRequestText={setRequestText}
+            optEnabled={optEnabled} setOptEnabled={setOptEnabled}
+            onRun={() => handleRunCorrection(false)}
             candidates={candidates}
             onApplyCandidate={handleApplyCandidate}
           />
