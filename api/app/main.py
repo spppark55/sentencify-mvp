@@ -338,9 +338,16 @@ async def recommend(req: RecommendRequest) -> RecommendResponse:
     if not score_categories:
         score_categories = set(p_rule)
 
+    RULE_WEIGHT = 0.3
+    vec_weight = (1 - RULE_WEIGHT) * (1 - alpha)
+    doc_weight = (1 - RULE_WEIGHT) * alpha
     final_scores: Dict[str, float] = {}
     for k in score_categories:
-        final_scores[k] = (1 - alpha) * p_vec.get(k, 0.0) + alpha * p_doc.get(k, 0.0)
+        final_scores[k] = (
+            vec_weight * p_vec.get(k, 0.0)
+            + doc_weight * p_doc.get(k, 0.0)
+            + RULE_WEIGHT * p_rule.get(k, 0.0)
+        )
 
     best_category = max(final_scores, key=final_scores.get)
     language = req.language or "ko"
