@@ -1,3 +1,4 @@
+// App.jsx
 import { useEffect, useState } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import Header from './Header.jsx';
@@ -352,6 +353,10 @@ export default function App() {
     const resolvedLanguage = optEnabled.language ? language : 'ko';
     const resolvedMaintenance = optEnabled.strength ? intensityLabel : 'moderate';
 
+    // intensity 매핑
+    const intensityMap = ['weak', 'moderate', 'strong'];
+    const intensityLabel = intensityMap[strength] || 'moderate';
+
     const payload = {
       doc_id: docId,
       user_id: userId,
@@ -462,6 +467,7 @@ export default function App() {
     );
   }
 
+  // ✅ user가 있을 때만 원래 에디터 3열 레이아웃 보여주기
   return (
     <div className="h-screen flex flex-col">
       <Header onLogout={handleLogout} />
