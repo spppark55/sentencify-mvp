@@ -128,26 +128,26 @@ services:
     networks:
       - sentencify-net
 
-  dashboard:
-    build:
-      context: ./dashboard
-    ports:
-      - "8501:8501"
-    environment:
-      MONGO_URI: "mongodb://mongo:27017"
-      MONGO_DB_NAME: "sentencify"
-      REDIS_HOST: "redis"
-      REDIS_PORT: "6379"
-      VECTOR_DB_HOST: "qdrant"
-      VECTOR_DB_PORT: "6333"
-      TZ: "Asia/Seoul" # Added for timezone synchronization
-    depends_on:
-      - mongo
-      - redis
-    volumes: # Added for timezone synchronization
-      - /etc/localtime:/etc/localtime:ro
-    networks:
-      - sentencify-net
+  # dashboard:
+  #   build:
+  #     context: ./dashboard
+  #   ports:
+  #     - "8501:8501"
+  #   environment:
+  #     MONGO_URI: "mongodb://mongo:27017"
+  #     MONGO_DB_NAME: "sentencify"
+  #     REDIS_HOST: "redis"
+  #     REDIS_PORT: "6379"
+  #     VECTOR_DB_HOST: "qdrant"
+  #     VECTOR_DB_PORT: "6333"
+  #     TZ: "Asia/Seoul" # Added for timezone synchronization
+  #   depends_on:
+  #     - mongo
+  #     - redis
+  #   volumes: # Added for timezone synchronization
+  #     - /etc/localtime:/etc/localtime:ro
+  #   networks:
+  #     - sentencify-net
 
 networks:
   sentencify-net:
