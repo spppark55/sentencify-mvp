@@ -1,20 +1,22 @@
 -----
 
-# Sentencify-MVP (Phase 1.5 완료)
+# Sentencify-MVP (Phase 2.5 인프라 구축 완료)
 
 이 프로젝트는 문맥 기반 문장 교정 추천 시스템 **Sentencify**의 MVP 버전입니다.
-현재 **Phase 1.5** 단계가 완료되었으며, KoBERT 분류기(Rule), 벡터 검색(Micro), 문서 전체 분석(Macro)이 결합된 하이브리드 추천 로직이 적용되어 있습니다.
+현재 **Phase 2.5** 인프라 구축 단계가 완료되었으며, ELK Stack을 도입하여 실시간 관제 및 데이터 분석 파이프라인을 확보했습니다. (대시보드 구성 예정)
 
 ##  현재 진행 상황 (Current Progress)
 
-  - [x] **Phase 1: 기본 추천 로직 완성**
-      - `P_rule` (KoBERT Classifier): 룰 기반 카테고리 분류
-      - `P_vec` (Vector Search): 문맥(Micro Context) 유사도 검색
-  - [x] **Phase 1.5: 문서 전체 분석 완성**
-      - `P_doc` (Macro Context): 문서 전체(Full Text) 분석 기반 가중치 적용 (`alpha`)
-  - [ ] **Phase 2: 분석 대시보드 & 파이프라인 (진행 중)**
-      - Streamlit 대시보드 뼈대 구축 완료
-      - 데이터 수집 및 연동 테스트 진행 중
+  - [x] **Phase 1 & 1.5: 추천 엔진 완성**
+      - `P_rule`, `P_vec`, `P_doc` 하이브리드 추천 로직
+      - Redis 기반 매크로 컨텍스트 캐싱
+  - [x] **Phase 2: 데이터 파이프라인 완성**
+      - Kafka -> MongoDB 실시간 로그 적재
+      - ETL 파이프라인: Raw Log -> Golden Data (`training_examples`) 생성
+  - [ ] **Phase 2.5: ELK 관제 시스템 (진행 중)**
+      - [x] **Real-time Ops:** Kafka -> Logstash -> Elasticsearch (실시간 로그 수집)
+      - [x] **Biz Analytics:** MongoDB(H) -> ES 증분 동기화 (비즈니스 지표 분석)
+      - [ ] **Dashboard:** Kibana 시각화 및 대시보드 구성 (예정)
 
 -----
 
@@ -37,7 +39,6 @@
 ### 2\. 환경 변수 설정 (.env)
 
 프로젝트 루트 디렉토리에 `.env` 파일을 생성하고 아래 내용을 입력하세요.
-(Macro Context 분석을 위해 OpenAI API 사용이 필요하며, 약 $5 정도의 크레딧 결제가 권장됩니다.)
 
 ```bash
 # .env 파일 생성
@@ -48,18 +49,19 @@ OPENAI_API_KEY=sk-proj-... (본인의 API KEY 입력)
 
 ##  실행 방법 (How to Run)
 
-도커를 이용하여 전체 서비스를 실행합니다.
+Docker Compose를 사용하여 서비스를 실행합니다. 목적에 따라 두 가지 방식이 있습니다.
 
+### Option A: Core 서비스만 실행 (가볍게)
+API, DB, Kafka 등 핵심 기능만 실행합니다.
 ```bash
-docker-compose -f docker-compose.mini.yml up --build
+docker-compose -f docker-compose.mini.yml up -d --build
 ```
 
-###  주의 사항 (Qdrant Data Loading)
-
-컨테이너가 실행된 직후에는 **추천 기능이 바로 동작하지 않을 수 있습니다.**
-
-  * 서버 시작 시 `api/train_data.csv` 데이터를 Qdrant(Vector DB)에 적재하는 과정이 진행됩니다.
-  * 로그에 **`Qdrant Collection Initialized`** 또는 데이터 적재 완료 메시지가 뜬 이후부터 정상적인 추천이 가능합니다.
+### Option B: Core + ELK 관제 스택 전체 실행 (권장)
+Kibana 대시보드까지 포함하여 전체 시스템을 실행합니다. (RAM 8GB 이상 권장)
+```bash
+docker-compose -f docker-compose.mini.yml -f docker-compose.elk.yml up -d --build
+```
 
 -----
 
@@ -71,19 +73,30 @@ docker-compose -f docker-compose.mini.yml up --build
 | :--- | :--- | :--- |
 | **Frontend** | `http://localhost:5173` | 웹 에디터 및 사용자 인터페이스 |
 | **Backend API** | `http://localhost:8000/docs` | Swagger API 명세서 및 테스트 |
-| **Dashboard** | `http://localhost:8501` | 관리자용 데이터 분석 대시보드 |
+| **Kibana** | `http://localhost:5601` | 실시간 로그 및 비즈니스 대시보드 |
+| **Streamlit** | `http://localhost:8501` | (Legacy) 관리자용 어드민 툴 |
 
 -----
 
-##  추천 점수 산출 공식 (Scoring Logic)
+## 🛠️ 주요 관리 스크립트 (Ops Scripts)
 
-현재 `/recommend` API는 아래 공식을 사용하여 최종 점수(`P_final`)를 산출합니다.
-규칙 기반 점수(`P_rule`)에 고정 가중치를 부여하고, 나머지 비중을 문맥(`P_vec`)과 문서 전체(`P_doc`)가 문서 성숙도(`alpha`)에 따라 나눠 갖는 구조입니다.
+컨테이너 내부에서 다음 스크립트를 실행하여 시스템을 관리할 수 있습니다.
 
-$$
-P_{final} = 0.3 \times P_{rule} + 0.7 \times \left[ (1 - \alpha) P_{vec} + \alpha P_{doc} \right]
-$$  * **$P_{rule}$ (30%)**: KoBERT 모델이 판단한 카테고리 확률 (고정 비중)
-* **$P_{vec}$**: 선택된 문장 주변의 문맥 유사도 (Micro Context)
-* **$P_{doc}$**: 문서 전체의 주제 및 특성 분석 (Macro Context)
-* **$\alpha$ (Alpha)**: 문서 성숙도 (문서 길이에 따라 0\~1 사이 값으로 동적 변동)
-$$
+### 1. Golden Data 동기화 (MongoDB -> Elasticsearch)
+ETL로 생성된 학습 데이터를 Kibana에서 보려면 동기화가 필요합니다.
+```bash
+# 1회 실행 (API 컨테이너 내부)
+docker-compose -f docker-compose.mini.yml -f docker-compose.elk.yml exec api python scripts/sync_golden_to_es.py
+```
+
+### 2. 트래픽 시뮬레이터 (부하 테스트)
+대시보드에 실시간 로그가 흐르는 것을 보고 싶을 때 사용합니다.
+```bash
+docker-compose -f docker-compose.mini.yml -f docker-compose.elk.yml exec api python scripts/simulate_traffic.py
+```
+
+### 3. ELK 연결 테스트
+ELK 파이프라인이 정상 작동하는지 검증합니다.
+```bash
+docker-compose -f docker-compose.mini.yml -f docker-compose.elk.yml exec -e API_HOST="http://api:8000" -e ELASTICSEARCH_HOST="http://elasticsearch:9200" -e KAFKA_BOOTSTRAP_SERVERS="kafka:9092" api python scripts/phase2.5_test_elk_pipeline.py
+```

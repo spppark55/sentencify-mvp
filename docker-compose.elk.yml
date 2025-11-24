@@ -17,7 +17,7 @@ services:
         soft: -1
         hard: -1
     volumes:
-      - es-data:/usr/share/elasticsearch/data
+      - ./elk/elasticsearch/data:/usr/share/elasticsearch/data
     ports:
       - "9200:9200"
     networks:
@@ -59,10 +59,6 @@ services:
     depends_on:
       - elasticsearch
     restart: unless-stopped
-
-volumes:
-  es-data:
-    driver: local
 
 # 기존 네트워크 사용 (docker-compose.mini.yml에 정의된 것과 동일해야 함)
 networks:
