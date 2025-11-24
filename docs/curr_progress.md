@@ -800,3 +800,19 @@
     - **Component Gap**: `dashboard/components/` directory missing; charts are not modularized.
 - **Next**: Fix query bug, implement missing queries, and add Phase 3/4 pages.
 - **Fix**: Phase 2 Dashboard Fix: Fixed collection name bug & Added Correction Funnel Chart.
+
+---
+
+## 2025-11-24 – Phase 2 Step 5 Dashboard Queries: Implemented, Fixed & Verified
+
+### 1. Dashboard Query Implementation & Bug Fix (`dashboard/queries.py`)
+- **`get_correction_funnel_data`**: The initial stub function was replaced with a robust MongoDB aggregation pipeline. The new pipeline correctly calculates the A/B/C funnel by grouping unique `recommend_session_id`s from `log_a_recommend` first, then using `$lookup` to count corresponding `log_b_run` and `log_c_select` events. This fixes a bug where `views_a` were overcounted. The function now also accepts an optional `user_id` for filtered queries.
+- **`get_user_profile_coverage`**: Fixed a bug where the function was not correctly calculating the coverage ratio. It now accepts an optional `user_filter` dictionary to scope the query, allowing for isolated testing. The logic was corrected to divide the count of users with profile embeddings by the total number of (filtered) users.
+
+### 2. Dashboard Integration Test (`scripts/phase2_test_step5_dashboard.py`)
+- **Test Creation**: A new integration test script was created following TDD principles to verify the dashboard queries against a live MongoDB instance.
+- **Data Isolation**: The test's `setup_test_data` function now injects a precise number of mock A, B, and C logs linked by session IDs for a specific test user (`dashboard_tester`).
+- **Query Verification**: The test calls the dashboard query functions (`get_correction_funnel_data` and `get_user_profile_coverage`) using filters to ensure the queries only run on the mock data set. Assertions now confirm that the returned counts (10 views, 5 runs, 2 accepts) and coverage ratio (0.25) are exactly as expected.
+
+### 3. Status
+- This work completes the final implementation and verification for the Phase 2 Dashboard's backend analytics, specifically the Correction Funnel and User Coverage metrics. The integration test now passes, confirming the data pipeline from logs to dashboard queries is working correctly.

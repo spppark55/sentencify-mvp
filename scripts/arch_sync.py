@@ -18,25 +18,31 @@ def print_tree(startpath, depth=2):
         # Remove hidden/venv dirs to keep it clean
         dirs[:] = [d for d in dirs if not d.startswith('.') and d not in ('venv', 'node_modules', '__pycache__')]
 
-def print_latest_progress():
-    progress_file = "docs/curr_progress.md"
-    print(f"### [Current Progress] (Latest Entry) ###")
-    
-    if not os.path.exists(progress_file):
-        print("No progress file found.")
-        return
+def get_latest_progress(file_path: str) -> str:
+    """
+    Reads the curr_progress.md file and returns only the content from the last '##' header.
+    This ensures that only the latest entry is included in the context.
+    """
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            content = f.read()
 
-    with open(progress_file, 'r', encoding='utf-8') as f:
-        lines = f.readlines()
+        # Find the index of the last '##' (markdown header for date/step)
+        last_header_index = content.rfind('##')
 
-    # Find the index of the last line starting with "## "
-    last_header_index = 0
-    for i, line in enumerate(lines):
-        if line.strip().startswith("## "):
-            last_header_index = i
-    
-    # Print from the last header to the end
-    print("".join(lines[last_header_index:]))
+        if last_header_index != -1:
+            # Slice the content from the last header index to the end
+            latest_progress = content[last_header_index:].strip()
+        else:
+            # If no '##' is found, return the full content
+            latest_progress = content.strip()
+            
+        return latest_progress
+
+    except FileNotFoundError:
+        return f"Error: Progress file not found at {file_path}"
+    except Exception as e:
+        return f"An error occurred while processing the progress file: {e}"
 
 def print_schema_status():
     print(f"### [Schema Status] ###")
@@ -67,7 +73,7 @@ if __name__ == "__main__":
             print_tree(d, depth=1)
     
     # 2. Latest Progress
-    print_latest_progress()
+    print(f"### [Current Progress] (Latest Entry) ###\n{get_latest_progress('docs/curr_progress.md')}")
     
     # 3. Schema Status
     print_schema_status()
