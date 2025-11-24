@@ -14,6 +14,7 @@ from .mongo import (
     get_macro_queue_length,
     get_recent_a_events,
     get_recent_runs,
+    get_recent_activity_stream,
     get_sankey_links,
     get_system_health,
     get_total_counts,

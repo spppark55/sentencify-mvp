@@ -138,6 +138,8 @@ services:
       MONGO_DB_NAME: "sentencify"
       REDIS_HOST: "redis"
       REDIS_PORT: "6379"
+      VECTOR_DB_HOST: "qdrant"
+      VECTOR_DB_PORT: "6333"
       TZ: "Asia/Seoul" # Added for timezone synchronization
     depends_on:
       - mongo

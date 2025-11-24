@@ -8,8 +8,12 @@ WORKDIR /app
 COPY api/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY app ./app
+COPY api/app ./app
+COPY scripts ./scripts
+COPY api/train_data.csv ./train_data.csv
 
-RUN chmod +x /app/scripts/entrypoint.sh
+# Copy entrypoint to a location not overridden by volume mount and fix line endings
+COPY scripts/entrypoint.sh /entrypoint.sh
+RUN sed -i 's/\r$//' /entrypoint.sh && chmod +x /entrypoint.sh
 
-ENTRYPOINT ["/bin/bash", "/app/scripts/entrypoint.sh"]
+ENTRYPOINT ["/bin/bash", "/entrypoint.sh"]

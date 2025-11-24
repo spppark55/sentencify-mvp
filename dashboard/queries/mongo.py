@@ -195,6 +195,61 @@ def get_recent_runs(limit: int = 5, user_id: Optional[str] = None) -> List[Dict[
         return []
 
 
+@st.cache_data(ttl=2)
+def get_recent_activity_stream(limit: int = 20, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    """
+    Aggregates recent A/B/C events to show a unified live stream.
+    """
+    query = _with_user({}, user_id)
+    
+    # 1. Fetch from A (Recommend)
+    docs_a = list(_col(COLL_A).find(query, {
+        "created_at": 1, "user_id": 1, "reco_category_input": 1, "latency_ms": 1
+    }).sort("created_at", -1).limit(limit))
+    
+    # 2. Fetch from B (Run)
+    docs_b = list(_col(COLL_B).find(query, {
+        "created_at": 1, "user_id": 1, "target_category": 1, "target_intensity": 1
+    }).sort("created_at", -1).limit(limit))
+
+    # 3. Fetch from C (Select)
+    docs_c = list(_col(COLL_C).find(query, {
+        "created_at": 1, "user_id": 1, "was_accepted": 1, "selected_option_index": 1
+    }).sort("created_at", -1).limit(limit))
+
+    combined = []
+    
+    for d in docs_a:
+        combined.append({
+            "timestamp": d.get("created_at"),
+            "event": "A (Recommend)",
+            "user": d.get("user_id"),
+            "detail": f"Cat: {d.get('reco_category_input')} | Latency: {d.get('latency_ms')}ms"
+        })
+        
+    for d in docs_b:
+        combined.append({
+            "timestamp": d.get("created_at"),
+            "event": "B (Run)",
+            "user": d.get("user_id"),
+            "detail": f"Target: {d.get('target_category')} ({d.get('target_intensity')})"
+        })
+        
+    for d in docs_c:
+        status = "Accepted" if d.get("was_accepted") else "Rejected"
+        combined.append({
+            "timestamp": d.get("created_at"),
+            "event": "C (Select)",
+            "user": d.get("user_id"),
+            "detail": f"{status} (Idx: {d.get('selected_option_index')})"
+        })
+
+    # Sort by timestamp descending
+    combined.sort(key=lambda x: x["timestamp"] if isinstance(x["timestamp"], datetime) else datetime.min, reverse=True)
+    
+    return combined[:limit]
+
+
 @st.cache_data(ttl=5)
 def get_latency_series(limit: int = 50, user_id: Optional[str] = None) -> List[Tuple[datetime, float]]:
     query = _with_user({}, user_id)

@@ -19,47 +19,73 @@ def _heat_color(role: str, seconds: float) -> str:
 
 def build_nodes(recency: Dict[str, float]) -> list[Node]:
     """
-    Static coordinates (x in [0,800], y in [0,600]) to keep layout stable.
-    Recency controls node color (heatmap).
+    Hierarchical layout: nodes do NOT need static x,y.
+    The solver will position them based on edge flow (User -> API -> DB).
     """
     return [
-        Node(id="User", label="User", size=18, color="#1f77b4", x=100, y=50),
-        Node(id="API", label="API", size=20, color=_heat_color("infra", recency.get("api", 999)), x=100, y=200),
-        Node(id="Emb Model", label="Emb Model", size=18, color=_heat_color("ai", recency.get("emb_model", 999)), x=350, y=200),
-        Node(id="VectorDB", label="VectorDB", size=18, color=_heat_color("infra", recency.get("vectordb", 999)), x=550, y=200),
-        Node(id="Mongo", label="MongoDB", size=18, color=_heat_color("infra", recency.get("mongo", 999)), x=50, y=380),
-        Node(id="Worker", label="Worker", size=18, color=_heat_color("infra", recency.get("worker", 999)), x=150, y=500),
-        Node(id="Redis", label="Redis", size=18, color=_heat_color("infra", recency.get("redis", 999)), x=350, y=380),
-        Node(id="GenAI (Macro)", label="GenAI (Macro)", size=18, color=_heat_color("ai", recency.get("genai_macro", 999)), x=550, y=380),
-        Node(id="GenAI (Run)", label="GenAI (Run)", size=18, color=_heat_color("ai", recency.get("genai_run", 999)), x=220, y=300),
+        Node(id="User", label="User", size=25, shape="circularImage", image="https://img.icons8.com/dusk/64/000000/user.png", color=_heat_color("user", 0)),
+        Node(id="API", label="API Gateway", size=25, shape="circularImage", image="https://img.icons8.com/dusk/64/000000/api-settings.png", color=_heat_color("infra", recency.get("api", 999))),
+        Node(id="Emb Model", label="Embedding", size=20, shape="circularImage", image="https://img.icons8.com/dusk/64/000000/artificial-intelligence.png", color=_heat_color("ai", recency.get("emb_model", 999))),
+        Node(id="VectorDB", label="VectorDB (E)", size=20, shape="circularImage", image="https://img.icons8.com/dusk/64/000000/database.png", color=_heat_color("infra", recency.get("vectordb", 999))),
+        Node(id="Mongo", label="MongoDB (Unified)", size=20, shape="circularImage", image="https://img.icons8.com/dusk/64/000000/server.png", color=_heat_color("infra", recency.get("mongo", 999))),
+        Node(id="Worker", label="Macro Worker", size=20, shape="circularImage", image="https://img.icons8.com/dusk/64/000000/worker.png", color=_heat_color("infra", recency.get("worker", 999))),
+        Node(id="Redis", label="Redis (Cache)", size=20, shape="circularImage", image="https://img.icons8.com/dusk/64/000000/redis.png", color=_heat_color("infra", recency.get("redis", 999))),
+        Node(id="GenAI (Macro)", label="GenAI (Macro)", size=20, shape="circularImage", image="https://img.icons8.com/dusk/64/000000/brain.png", color=_heat_color("ai", recency.get("genai_macro", 999))),
+        Node(id="GenAI (Run)", label="GenAI (Run)", size=20, shape="circularImage", image="https://img.icons8.com/dusk/64/000000/robot.png", color=_heat_color("ai", recency.get("genai_run", 999))),
     ]
 
 
 def build_edges() -> list[Edge]:
+    # Define edges to enforce hierarchy: User -> API -> [Services]
     return [
-        Edge(source="User", target="API"),
-        Edge(source="API", target="Emb Model"),
-        Edge(source="Emb Model", target="VectorDB"),
-        Edge(source="API", target="Mongo"),
-        Edge(source="API", target="Redis"),
-        Edge(source="API", target="GenAI (Run)"),
-        Edge(source="Worker", target="Mongo"),
-        Edge(source="Worker", target="Redis"),
-        Edge(source="Worker", target="GenAI (Macro)"),
-        Edge(source="GenAI (Macro)", target="Redis"),
+        Edge(source="User", target="API", label="HTTP"),
+        Edge(source="API", target="Emb Model", label="gRPC"),
+        Edge(source="Emb Model", target="VectorDB", label="Upsert"),
+        Edge(source="API", target="Mongo", label="Log/Read"),
+        Edge(source="API", target="Redis", label="Cache"),
+        Edge(source="API", target="GenAI (Run)", label="Paraphrase"),
+        
+        # Worker Flow (Offline/Async)
+        Edge(source="Mongo", target="Worker", label="Stream"),
+        Edge(source="Worker", target="GenAI (Macro)", label="Analysis"),
+        Edge(source="GenAI (Macro)", target="Redis", label="Write Cache"),
     ]
 
 
-def render_topology(recency: Dict[str, float], height: int = 500) -> Optional[str]:
+def render_topology(recency: Dict[str, float], height: int = 600) -> Optional[str]:
     nodes = build_nodes(recency)
     edges = build_edges()
+    
+    # Hierarchical Layout Configuration
     config = Config(
         width="100%",
         height=height,
         directed=True,
-        physics=False,  # keep nodes fixed
-        hierarchical=False,
+        physics=False, 
+        hierarchical=True,  # Enable Hierarchy
+        # sortMethod='directed' ensures nodes follow edge direction
+        # direction='LR' (Left-to-Right) or 'UD' (Up-Down)
+        layout={
+            "hierarchical": {
+                "enabled": True,
+                "levelSeparation": 150,
+                "nodeSpacing": 100,
+                "treeSpacing": 200,
+                "blockShifting": True,
+                "edgeMinimization": True,
+                "parentCentralization": True,
+                "direction": "LR",        # Left to Right Flow
+                "sortMethod": "directed", # Arrange by direction
+            }
+        },
         nodeHighlightBehavior=True,
-        link={"label": "flow", "type": "CURVE_SMOOTH", "renderLabel": False, "strokeWidth": 2, "color": "#aaaaaa", "dashed": True},
+        highlightColor="#F7A7A6",
+        collapsible=False,
+        link={
+            "type": "CURVE_SMOOTH", 
+            "renderLabel": True, 
+            "strokeWidth": 1.5, 
+            "color": "#cfcfcf"
+        },
     )
     return agraph(nodes=nodes, edges=edges, config=config)

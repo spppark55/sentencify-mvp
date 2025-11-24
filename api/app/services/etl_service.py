@@ -179,3 +179,9 @@ def run_etl_pipeline(mongo_client: MongoClient | None = None) -> int:
         processed += 1
 
     return processed
+
+
+if __name__ == "__main__":
+    print("Starting ETL Pipeline...")
+    count = run_etl_pipeline()
+    print(f"ETL Pipeline completed. Processed {count} records.")

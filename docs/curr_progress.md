@@ -891,3 +891,50 @@
   - The integration test successfully identified and led to the fix of a data isolation bug in `get_correction_funnel_data` and `get_user_profile_coverage`.
   - By adding optional filters to the query functions and applying them in the test, the queries now return accurate, isolated results.
 - **Status**: ✅ All tests in `test_dashboard_queries.py` now pass, confirming that the dashboard's data aggregation logic is correct and robust.
+
+---
+
+## 2025-11-24 – Dashboard Visualization Upgrade & ELK Integration Start
+
+### 1. Dashboard Upgrade (Live Stream & Topology)
+- **Live Activity Stream (`dashboard/app.py`):**
+  - 메인 페이지를 "실시간 활동 스트림"으로 개편.
+  - A(추천)/B(실행)/C(선택) 로그를 통합하여 시간순으로 표시하는 `get_recent_activity_stream` 쿼리 구현 및 적용.
+- **Topology Map Refactoring (`dashboard/components/topology_graph.py`):**
+  - `streamlit-agraph` 설정을 `hierarchical=True`, `direction='LR'`(Left-to-Right)로 변경하여 깔끔한 파이프라인 구조 시각화.
+  - 노드 아이콘 적용 및 `_heat_color` 로직을 통해 데이터 흐름에 따른 실시간 색상 변화(Heatmap) 구현.
+  - `scripts/simulate_traffic.py`의 Burst 트래픽으로 시각화 효과 검증 완료.
+
+### 2. ELK Stack Integration (Phase 2.5 착수)
+- **Roadmap & Architecture:**
+  - `docs/phase2.5/elk_로드맵.md` 작성: Streamlit 폐기 및 ELK 전면 전환 전략 수립.
+  - `docs/아키텍쳐2-4.md` 업데이트: Kafka Consumer Group을 활용한 **병렬 로그 구독(Parallel Subscription)** 아키텍처 명시 (MongoDB: 보존/ETL, ELK: 관제/BI).
+- **Infrastructure Setup:**
+  - `docker-compose.elk.yml` 생성: Elasticsearch, Logstash, Kibana 컨테이너 정의 (메모리 최적화 포함).
+  - `elk/logstash/config/logstash.yml`, `elk/kibana/config/kibana.yml` 기본 설정 파일 생성.
+  - **Logstash Pipeline (`elk/logstash/pipeline/logstash.conf`):**
+    - Kafka Input 플러그인 설정: `editor_recommend_options`, `editor_run_paraphrasing` 등 주요 토픽 구독.
+    - `filter` 단계에서 `json { source => "message" }`로 파싱 처리 (CRLF 및 JSON 에러 해결).
+    - Elasticsearch Output 설정: `sentencify-logs-*` 인덱스로 실시간 적재 파이프라인 구축.
+- **Verification:**
+  - **Unit Test (`scripts/test_elk_connection.py`):**
+    - Elasticsearch 연결 및 Logstash 파이프라인(Kafka -> ES) 정상 작동 확인 ✅
+  - **Integration Test (`scripts/phase2.5_test_elk_pipeline.py`):**
+    - API 호출부터 Elasticsearch 적재까지의 E2E 파이프라인 정상 작동 확인 ✅
+
+### 3. Golden Data Mocking (For ELK Pipeline 2)
+- **Objective:** ELK의 Golden Data 시각화 파이프라인을 테스트하기 위해, ETL을 거치지 않고 MongoDB에 강제로 학습 데이터(`training_examples`)를 주입.
+- **Action:**
+  - `scripts/inject_mock_golden_data.py` 작성 및 실행.
+  - MongoDB에 `training_examples` 컬렉션 생성 및 Mock 데이터 5건 적재 완료.
+  - 이를 통해 후속 작업인 "MongoDB -> ES 동기화 스크립트" 개발 준비 완료.
+
+### 4. Golden Data Sync Pipeline (MongoDB -> Elasticsearch)
+- **Script (`scripts/sync_golden_to_es.py`):**
+  - **Incremental Sync:** Elasticsearch에서 가장 최근 `created_at` 체크포인트를 조회하여, 그 이후 생성된 MongoDB 데이터만 가져오는 효율적인 로직 구현.
+  - **Bulk Upsert:** `helpers.bulk`를 사용하여 대량 데이터를 ES 인덱스(`sentencify-golden-YYYY.MM`)에 고속 적재.
+  - **Verification:** Mock Data 5건이 성공적으로 ES로 동기화됨을 확인 (`[Synced 5 documents]`).
+- **Dependency Update:**
+  - `api/requirements.txt`에 `elasticsearch<9.0.0` 및 `python-dateutil` 추가 (ES 8.x 서버 호환성 확보).
+
+---

@@ -5,8 +5,9 @@ from datetime import datetime
 from typing import Optional
 
 import streamlit as st
+import pandas as pd
 
-from queries import get_recent_a_events, get_system_health
+from queries import get_recent_a_events, get_system_health, get_recent_activity_stream
 
 
 st.set_page_config(
@@ -52,10 +53,10 @@ def _sidebar_controls() -> Optional[str]:
     user_id = st.sidebar.text_input("User ID Filter (optional)")
     st.session_state["user_filter"] = user_id or None
 
-    auto = st.sidebar.toggle("Auto-Refresh (5s)", value=False)
+    auto = st.sidebar.toggle("Auto-Refresh (5s)", value=True)
     if auto:
         time.sleep(5)
-        st.experimental_rerun()
+        st.rerun()
 
     _render_health()
     _render_ticker(user_id or None)
@@ -65,12 +66,34 @@ def _sidebar_controls() -> Optional[str]:
 def main() -> None:
     user_id = _sidebar_controls()
     st.title("Sentencify Dashboard")
-    st.caption("Sidecar Streamlit dashboard — Read-only control tower for v2.4.")
-    st.info(
-        "Use the sidebar to filter by user_id and enable auto-refresh. "
-        "Navigate pages via the left navigation."
-    )
-    st.write(f"Active user filter: `{user_id or 'None'}`")
+    
+    # Main Content: Live Activity Stream
+    st.markdown("### 📡 Live Activity Stream (All Events)")
+    
+    stream_data = get_recent_activity_stream(limit=20, user_id=user_id)
+    
+    if stream_data:
+        # Convert to DataFrame for better display
+        df = pd.DataFrame(stream_data)
+        # Format timestamp
+        df["timestamp"] = df["timestamp"].apply(lambda x: x.strftime("%H:%M:%S") if isinstance(x, datetime) else str(x))
+        
+        st.dataframe(
+            df,
+            column_config={
+                "timestamp": st.column_config.TextColumn("Time", width="medium"),
+                "event": st.column_config.TextColumn("Event Type", width="medium"),
+                "user": st.column_config.TextColumn("User ID", width="medium"),
+                "detail": st.column_config.TextColumn("Detail Info", width="large"),
+            },
+            use_container_width=True,
+            hide_index=True,
+        )
+    else:
+        st.info("No recent activity found. Waiting for events...")
+
+    if user_id:
+        st.write(f"Filtering by User ID: `{user_id}`")
 
 
 if __name__ == "__main__":
