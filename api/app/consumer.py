@@ -11,6 +11,8 @@ from pymongo import MongoClient
 
 from app.schemas.corporate import CorporateRunLog, CorporateSelectLog, CorrectionHistory
 from app.schemas.logs import LogA, LogB, LogC, LogI
+from app.utils.embedding import get_embedding
+from app.qdrant.service import insert_point
 
 KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
 MONGO_URI = os.getenv("MONGO_URI", "mongodb://mongo:27017")
@@ -23,6 +25,7 @@ KAFKA_TOPICS = [
     "editor_recommend_options",
     "recommend_log",
     "editor_document_snapshot",
+    "context_block",
 ]
 
 
@@ -133,6 +136,8 @@ class SmartRouter:
             self._handle_recommend_log(payload)
         elif event == "editor_document_snapshot":
             self._handle_snapshot(payload)
+        elif event == "context_block":
+            self._handle_context_block(payload)
 
     def flush_all(self) -> None:
         for processor in self.batchers.values():
@@ -261,6 +266,38 @@ class SmartRouter:
                 },
                 upsert=True,
             )
+
+    def _handle_context_block(self, payload: Dict[str, Any]) -> None:
+        """E.context_block 이벤트를 처리하여 Qdrant에 저장합니다."""
+        context_hash = payload.get("context_hash")
+        context_full = payload.get("context_full")
+
+        if not context_hash or not context_full:
+            print(f"[ERROR] Invalid context_block event: {payload}")
+            return
+
+        try:
+            # 1. 텍스트 임베딩 생성
+            embedding = get_embedding(context_full)
+
+            # 2. Qdrant에 저장할 payload 구성
+            qdrant_payload = {
+                "doc_id": payload.get("doc_id"),
+                "user_id": payload.get("user_id"),
+                "context_full_preview": context_full[:500],
+                "created_at": payload.get("created_at"),
+            }
+
+            # 3. Qdrant에 데이터 저장
+            insert_point(
+                point_id=context_hash,
+                vector=embedding,
+                payload=qdrant_payload
+            )
+            print(f"[INFO] Successfully inserted context_block with hash: {context_hash[:10]}...")
+
+        except Exception as e:
+            print(f"[ERROR] Failed to process context_block event: {e}")
 
 
 def build_kafka_consumer(topics: Iterable[str]) -> KafkaConsumer:

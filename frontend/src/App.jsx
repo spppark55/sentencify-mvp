@@ -140,22 +140,22 @@ export default function App() {
     });
   }, [text, currentId]);
 
-  // useEffect(() => {
-  //   if (!docId || !userId) return;
+  useEffect(() => {
+    if (!docId || !userId) return;
 
-  //   const handler = setTimeout(async () => {
-  //     try {
-  //       await updateDocument(docId, {
-  //         latest_full_text: text,
-  //         user_id: userId,
-  //       });
-  //     } catch (err) {
-  //       console.warn('자동 저장(updateDocument) 실패', err);
-  //     }
-  //   }, 1200);
+    const handler = setTimeout(async () => {
+      try {
+        await updateDocument(docId, {
+          latest_full_text: text,
+          user_id: userId,
+        });
+      } catch (err) {
+        console.warn('자동 저장(updateDocument) 실패', err);
+      }
+    }, 1200);
 
-  //   return () => clearTimeout(handler);
-  // }, [text, docId, userId]);
+    return () => clearTimeout(handler);
+  }, [text, docId, userId]);
   
 
   // 새 문서 (Frontend)
@@ -352,10 +352,6 @@ export default function App() {
       optEnabled.category && category !== 'none' ? category : 'general';
     const resolvedLanguage = optEnabled.language ? language : 'ko';
     const resolvedMaintenance = optEnabled.strength ? intensityLabel : 'moderate';
-
-    // intensity 매핑
-    const intensityMap = ['weak', 'moderate', 'strong'];
-    const intensityLabel = intensityMap[strength] || 'moderate';
 
     const payload = {
       doc_id: docId,

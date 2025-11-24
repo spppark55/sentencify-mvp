@@ -113,13 +113,7 @@ LOG_DIR = Path("logs")
 KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
 KAFKA_ENABLED = os.getenv("KAFKA_ENABLED", "true").lower() != "false"
 
-# --- Gemini API Key 설정 ---
-# 아래 주석을 해제하고 실제 API 키를 설정하거나,
-# `GEMINI_API_KEY` 환경변수를 설정해주세요.
-# os.environ['GEMINI_API_KEY'] = "YOUR_API_KEY"
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
+
 
 
 MONGO_URI = os.getenv("MONGO_URI", "mongodb://mongo:27017")
@@ -279,108 +273,39 @@ def produce_b_event(payload: Dict) -> None:
         except Exception:
             pass
 
-@app.post("/paraphrase", response_model=ParaphraseResponse)
-async def paraphrase(req: ParaphraseRequest) -> ParaphraseResponse:
-    """
-    B 이벤트: editor_run_paraphrasing 처리
-    추천(A) 이후 사용자가 실행 버튼을 눌렀을 때 호출되는 엔드포인트
-    """
-    if not GEMINI_API_KEY:
-        raise HTTPException(
-            status_code=500,
-            detail="GEMINI_API_KEY is not configured on the server.",
-        )
-
-    event_id = str(uuid.uuid4())
-
-    # B 이벤트 생성 및 발행
-    b_event = {
-        "event": "editor_run_paraphrasing",
-        "event_id": event_id,
-        "source_recommend_event_id": req.source_recommend_event_id,
-        "recommend_session_id": req.recommend_session_id,
-        "doc_id": req.doc_id,
-        "user_id": req.user_id,
-        "context_hash": req.context_hash,
-        "target_category": req.target_category,
-        "target_language": req.target_language,
-        "target_intensity": req.target_intensity,
-        "executed_at": _now_iso(),
-        "created_at": _now_iso(),
-        "paraphrase_llm_version": "gemini-2.5-flash",
-    }
-    produce_b_event(b_event)
-
-    # Gemini API 호출로 교정 문장 생성
-    try:
-        model = genai.GenerativeModel('gemini-2.5-flash')
-        prompt = build_paraphrase_prompt(
-            selected_text=req.selected_text,
-            category=req.target_category,
-            intensity=req.target_intensity,
-            language=req.target_language,
-        )
-
-        response = await model.generate_content_async(prompt)
-        raw_text = response.text.strip()
-
-        # 응답 파싱: 줄바꿈으로 분리
-        candidates = [c.strip() for c in raw_text.split('\n') if c.strip()]
-
-        # 빈 결과 처리
-        if not candidates:
-            candidates = [req.selected_text]  # Fallback: 원문 반환
-
-        # 최대 3개로 제한
-        candidates = candidates[:3]
-
-        return ParaphraseResponse(
-            candidates=candidates,
-            event_id=event_id,
-            recommend_session_id=req.recommend_session_id,
-        )
-
-    except Exception as e:
-        print(f"Error calling Gemini API: {e}")
-        # 에러 시 원문을 후보로 반환
-        return ParaphraseResponse(
-            candidates=[req.selected_text],
-            event_id=event_id,
-            recommend_session_id=req.recommend_session_id,
-        )
 
 
 # 문장교정 프롬프트 (레거시 호환성을 위해 유지)
-@app.post("/correct", response_model=List[str])
-async def correct(req: CorrectRequest) -> List[str]:
-    """
-    레거시 엔드포인트 - 간단한 교정용
-    프로젝트 아키텍처상으로는 /paraphrase 사용 권장
-    """
-    if not GEMINI_API_KEY:
-        raise HTTPException(
-            status_code=500,
-            detail="GEMINI_API_KEY is not configured on the server.",
-        )
+# @app.post("/correct", response_model=List[str])
+# async def correct(req: CorrectRequest) -> List[str]:
+#     """
+#     레거시 엔드포인트 - 간단한 교정용
+#     프로젝트 아키텍처상으로는 /paraphrase 사용 권장
+#     """
+#     if not GEMINI_API_KEY:
+#         raise HTTPException(
+#             status_code=500,
+#             detail="GEMINI_API_KEY is not configured on the server.",
+#         )
 
-    model = genai.GenerativeModel('gemini-2.5-flash')
+#     model = genai.GenerativeModel('gemini-2.5-flash')
 
-    # 새로운 프롬프트 함수 사용
-    prompt = build_paraphrase_prompt(
-        selected_text=req.selected_text,
-        category=req.field or "email",
-        intensity=req.intensity or "moderate",
-        language=req.language or "ko",
-    )
+#     # 새로운 프롬프트 함수 사용
+#     prompt = build_paraphrase_prompt(
+#         selected_text=req.selected_text,
+#         category=req.field or "email",
+#         intensity=req.intensity or "moderate",
+#         language=req.language or "ko",
+#     )
 
-    try:
-        response = await model.generate_content_async(prompt)
-        candidates = response.text.strip().split('\n')
-        # 빈 문자열 제거
-        return [c.strip() for c in candidates if c.strip()]
-    except Exception as e:
-        print(f"Error calling Gemini API: {e}")
-        raise HTTPException(status_code=500, detail="Failed to call Gemini API.")
+#     try:
+#         response = await model.generate_content_async(prompt)
+#         candidates = response.text.strip().split('\n')
+#         # 빈 문자열 제거
+#         return [c.strip() for c in candidates if c.strip()]
+#     except Exception as e:
+#         print(f"Error calling Gemini API: {e}")
+#         raise HTTPException(status_code=500, detail="Failed to call Gemini API.")
 
 
 def produce_c_event(payload: Dict) -> None:
@@ -463,6 +388,9 @@ async def recommend(req: RecommendRequest) -> RecommendResponse:
     p_doc: Dict[str, float] = {}
     if macro_context:
         p_doc[macro_context.macro_category_hint] = 1.0
+    elif p_rule:
+        best_rule_category = max(p_rule, key=p_rule.get)
+        p_doc[best_rule_category] = 1.0
 
     doc_text_for_len = (req.context_prev or "") + (req.selected_text or "") + (req.context_next or "")
     doc_length = len(doc_text_for_len)

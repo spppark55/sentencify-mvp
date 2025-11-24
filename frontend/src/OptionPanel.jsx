@@ -91,30 +91,6 @@ export default function OptionPanel({
     }
   };
 
-  const renderOnOffLabel = (isOn) => (
-    <div className="flex items-center gap-1 text-xs">
-      <span
-        className={
-          isOn
-            ? 'font-semibold text-purple-600'
-            : 'text-gray-400'
-        }
-      >
-        ON
-      </span>
-      <span className="text-gray-300">/</span>
-      <span
-        className={
-          !isOn
-            ? 'font-semibold text-purple-600'
-            : 'text-gray-400'
-        }
-      >
-        OFF
-      </span>
-    </div>
-  );
-
   return (
     <aside className="h-full flex flex-col gap-4">
       {/* 교정 대상 문장 미리보기 영역 */}
@@ -160,7 +136,7 @@ export default function OptionPanel({
           <option value="report">보고서</option>
           <option value="article">기사</option>
           <option value="marketing">마케팅</option>
-          <option value="customer">고객상담</option>
+          <option value="custome_service">고객 상담</option>
         </select>
 
       </div>
