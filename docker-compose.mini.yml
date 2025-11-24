@@ -15,6 +15,7 @@ services:
       REDIS_HOST: "redis"
       # GEMINI_API_KEY: "${GEMINI_API_KEY}"
       OPENAI_API_KEY: "${OPENAI_API_KEY}"
+      TZ: "Asia/Seoul" # Added for timezone synchronization
     depends_on:
       - kafka
       - mongo
@@ -25,6 +26,7 @@ services:
       - ./scripts:/app/scripts
       - ./api/train_data.csv:/app/train_data.csv
       - ./models:/app/models
+      - /etc/localtime:/etc/localtime:ro # Added for timezone synchronization
     networks:
       - sentencify-net
 
@@ -40,43 +42,15 @@ services:
       # [중요] /app/node_modules는 마운트에서 제외하여,
       # 컨테이너 내부의 node_modules를 사용 (성능 및 호환성)
       - /app/node_modules
+      - /etc/localtime:/etc/localtime:ro # Added for timezone synchronization
+    environment: # Added for timezone synchronization
+      TZ: "Asia/Seoul"
     networks:
       - sentencify-net
     depends_on:
       - api # API가 실행된 후 frontend 실행
     command: >
       sh -c "npm install && npm run dev -- --host 0.0.0.0"
-
-
-  # kafka:
-  #   image: confluentinc/cp-kafka:7.6.1
-  #   ports:
-  #     - "9092:9092"
-  #     - "9093:9093"
-    # environment:
-    #   KAFKA_ENABLE_KRAFT: "yes"
-    #   KAFKA_CFG_PROCESS_ROLES: "broker,controller"
-    #   KAFKA_CFG_NODE_ID: "1"
-    #   KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: "1@kafka:9094"
-    #   KAFKA_CFG_LISTENERS: "PLAINTEXT://:9092,PLAINTEXT_HOST://:9093,CONTROLLER://:9094"
-    #   KAFKA_CFG_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:9093"
-    #   KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: "PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT,CONTROLLER:PLAINTEXT"
-    #   KAFKA_CFG_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
-    #   KAFKA_CFG_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
-    # environment:
-    #   KAFKA_ENABLE_KRAFT: "yes"
-    #   KAFKA_PROCESS_ROLES: "broker,controller"
-    #   KAFKA_NODE_ID: "1"
-    #   KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:9094"
-    #   KAFKA_LISTENERS: "PLAINTEXT://:9092,PLAINTEXT_HOST://:9093,CONTROLLER://:9094"
-    #   KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:9093"
-    #   KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT,CONTROLLER:PLAINTEXT"
-    #   KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
-    #   KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
-    # volumes:
-    #   - kafka-data:/tmp/kafka-logs
-    # networks:
-    #   - sentencify-net
 
   kafka:
     image: confluentinc/cp-kafka:7.6.1
@@ -109,15 +83,12 @@ services:
 
       # 로그 디렉토리
       KAFKA_LOG_DIRS: "/var/lib/kafka/data"
-
+      TZ: "Asia/Seoul" # Added for timezone synchronization
     volumes:
       - kafka-data:/var/lib/kafka/data
+      - /etc/localtime:/etc/localtime:ro # Added for timezone synchronization
     networks:
       - sentencify-net
-
-
-
-
 
   mongo:
     image: mongo:6.0
@@ -127,6 +98,9 @@ services:
       - mongo-data:/data/db
       - ./docker/mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js:ro
       - ./data/import:/data/import:ro
+      - /etc/localtime:/etc/localtime:ro # Added for timezone synchronization
+    environment: # Added for timezone synchronization
+      TZ: "Asia/Seoul"
     networks:
       - sentencify-net
 
@@ -137,6 +111,9 @@ services:
       - "6334:6334"
     volumes:
       - qdrant-data:/qdrant/storage
+      - /etc/localtime:/etc/localtime:ro # Added for timezone synchronization
+    environment: # Added for timezone synchronization
+      TZ: "Asia/Seoul"
     networks:
       - sentencify-net
 
@@ -144,6 +121,10 @@ services:
     image: redis:7
     ports:
       - "6379:6379"
+    environment: # Added for timezone synchronization
+      TZ: "Asia/Seoul"
+    volumes:
+      - /etc/localtime:/etc/localtime:ro # Added for timezone synchronization
     networks:
       - sentencify-net
 
@@ -157,9 +138,12 @@ services:
       MONGO_DB_NAME: "sentencify"
       REDIS_HOST: "redis"
       REDIS_PORT: "6379"
+      TZ: "Asia/Seoul" # Added for timezone synchronization
     depends_on:
       - mongo
       - redis
+    volumes: # Added for timezone synchronization
+      - /etc/localtime:/etc/localtime:ro
     networks:
       - sentencify-net
 

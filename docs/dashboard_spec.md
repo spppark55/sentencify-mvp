@@ -1,115 +1,163 @@
-# 📊 **대시보드 지표 명세서 (Dashboard Metrics Specification)**
+죄송합니다. 제가 "Phase 2 집중"이라는 맥락을 과도하게 해석하여, **이미 정의된 Phase 3, 4의 스펙까지 임의로 제외하는 실수를 범했습니다.**
 
-- **적용 아키텍처:** v2.4 (Streamlit Sidecar Pattern)
-- **기술 스택:** Streamlit (Python), Plotly, MongoDB/Redis/DWH Direct Query(mongoDB가 DWH)
+사용자님의 지적대로 \*\*기존에 정의된 [Old Spec]의 모든 지표(Phase 1\~4)\*\*를 유지하면서, \*\*새로 도입된 [New Spec]의 인터랙티브 기능(Topology, Sankey, LLMOps, Demo)\*\*을 통합하는 것이 맞습니다.
 
----
+이에, **단 하나의 지표도 누락하지 않고**, **데모 시연 기능**까지 포함한 \*\*[최종 완전판 대시보드 명세서]\*\*를 작성해 드립니다.
 
-## **1. 개요 (Overview)**
+-----
 
-### **1.1 목적**
+# 📊 **대시보드 통합 명세서 v2.4 (Final Full Scope)**
 
-본 대시보드는 Sentencify 시스템의 **"기술적 안정성"**을 넘어, 수집된 데이터가 기업에 주는 **"비즈니스 가치(Business Value)"**를 시각적으로 증명하는 것을 목표로 한다.
+  * **적용 아키텍처:** v2.4 (Streamlit Sidecar Pattern)
+  * **범위:** **Phase 1 \~ Phase 4 (전체 스펙 포함)**
+  * **핵심 컨셉:** **"Interactive Control Tower"** (구조와 흐름 중심의 시각화 + 상세 지표 Inspector)
+  * **기술 스택:** `Streamlit`, `streamlit-agraph`, `Plotly`, `pymongo`, `redis-py`
 
-### **1.2 아키텍처 원칙 (Sidecar Pattern)**
+-----
 
-- **Zero-Touch:** 기존 백엔드 API 로직을 전혀 수정하지 않는다.
-- **Read-Only:** 대시보드는 오직 DB(Mongo, Redis,)에 대한 **읽기 권한**만 가진다.
-- **Admin-Only:** 일반 사용자에게 노출되지 않으며, 별도 포트/인증을 통해 관리자만 접근한다.
+## **1. 레이아웃 및 공통 기능 (Global Layout)**
 
----
+### **1.1 Sidebar: Live Monitor & Demo Controls**
 
-## **2. Phase별 시각화 명세**
+**목적:** 시스템 생존 확인 및 **데모 시연 통제**.
 
-### **🟦 Phase 1: 서비스 안정성 및 수집 현황**
+1.  **System Health (신호등):**
+      * MongoDB / Redis / VectorDB 연결 상태 (🟢 Online / 🔴 Offline).
+2.  **Demo Controls (시연용 - 신규):**
+      * **User ID Filter:** 입력창 (기본값: `All`). 입력 시 모든 차트가 해당 유저 데이터만 쿼리.
+      * **Auto-Refresh:** 토글 스위치 (On/Off). On 시 5초 주기 자동 갱신.
+3.  **Live Ticker:**
+      * 최신 로그 5건 롤링 디스플레이.
+      * Format: `[HH:MM:SS] User-123.. : Accepted (320ms)`
 
-- **핵심 메시지:** "시스템이 정상 작동 중이며, 기초 데이터가 쌓이고 있습니다."
-- **주요 데이터 소스:** `A` (추천 로그), `I` (시스템 로그), `E` (Micro Context)
+### **1.2 Main Pages Navigation**
 
-| **지표명 (Metric)** | **설명** | **시각화 방식** | **쿼리 로직 (Pseudo)** |
-| --- | --- | --- | --- |
-| **Total Traffic** | 누적 추천 요청 수 | **Big Number** | `count(A)` |
-| **Micro Contexts** | 수집된 문장/벡터 자산 규모 | **Big Number** | `count(E)` |
-| **Category Dist.** | 사용자가 입력한 문장의 카테고리 분포 | **Donut Chart** | `group_by(A.reco_category_input)` |
-| **System Latency** | 추천 API의 평균 응답 속도 추이 | **Line Chart** | `avg(I.latency_ms)` per hour |
+1.  **🚀 System Topology (Phase 1\~1.5):** 아키텍처 지도, LLMOps, 서비스 안정성 관제.
+2.  **💎 Data Flow & Assets (Phase 2):** 데이터 파이프라인 흐름 및 자산화 현황.
+3.  **👤 User Insights (Phase 3):** 사용자 프로필 및 군집 분석.
+4.  **🤖 Auto-Gen ROI (Phase 4):** 생성형 자동화 성과 분석.
 
----
+-----
 
-### **🟦🟩 Phase 1.5: 지능형 분석 및 적응형 스코어링**
+## **2. 페이지별 상세 명세 (Metrics Mapping)**
 
-- **핵심 메시지:** "문서의 맥락(Context)을 이해하고, 길이에 따라 똑똑하게 반응합니다."
-- **주요 데이터 소스:** `K` (문서 원본), `F` (Macro Cache), `I` (Adaptive Log)
+### **PAGE 0: 🚀 System Topology & LLMOps (Phase 1 & 1.5)**
 
-| **지표명 (Metric)** | **설명** | **시각화 방식** | **쿼리 로직 (Pseudo)** |
-| --- | --- | --- | --- |
-| **Macro ETL Trigger** | 대량 수정으로 인한 AI 재분석 횟수 | **Bar Chart** | `count(I)` where `diff_ratio >= 0.1` |
-| **Drafting vs Polishing** | 유저가 '막 쓰는 중(Draft)'인지 '다듬는 중(Polish)'인지 비율 분석 | **Histogram** | `K.diff_ratio` 분포 (0.1 기준) |
-| **Adaptive Weight ($\alpha$)** | 문서 길이에 따른 Macro 반영 비중 | **Scatter Plot** | X: `doc_len`, Y: `I.applied_weight_doc` |
-| **Cache Hit Rate** | Redis 캐시 적중률 (재사용 효율) | **Gauge Chart** | `I.cache_hit_macro` True 비율 |
+**목적:** 시스템 구조를 시각화하고, 노드 클릭 시 **기존 Phase 1, 1.5 지표**를 상세 점검한다.
 
----
+#### **(1) Interactive Topology Map (`streamlit-agraph`)**
 
-### **🟦🟨 Phase 2: 데이터 자산화 및 품질 관리**
+  * **Nodes:**
+      * 🟦 **Infra:** `User`, `API`, `Worker`, `Mongo`, `Redis`, `VectorDB`
+      * 🟪 **AI Models:** `Emb Model` (Sync), `GenAI-Run` (Sync), `GenAI-Macro` (Async)
+  * **Edges:** 데이터 흐름 화살표.
+  * **Dynamic Activity:** 최근 10초 내 트랜잭션 발생 시 노드 **Green** 점등.
 
-- **핵심 메시지:** "학습 가능한 고품질 데이터(Golden Data)가 자산으로 쌓이고 있습니다."
-- **주요 데이터 소스:** `H` (학습 데이터), `G` (유저 프로필), `C` (선택 로그)
+#### **(2) Inspector Panel (하단 클릭 이벤트)**
 
-| **지표명 (Metric)** | **설명** | **시각화 방식** | **쿼리 로직 (Pseudo)** |
-| --- | --- | --- | --- |
-| **Golden Data Count** | 정합성이 검증된 고품질 학습 데이터 수 | **Area Chart** | `count(H)` where `consistency="high"` |
-| **Acceptance Rate** | 유저가 1순위 추천을 실제로 선택한 비율 | **Trend Line** | `C.was_accepted` / `count(A)` |
-| **User Coverage** | 프로필 분석이 완료된 유저 커버리지 | **Progress Bar** | `count(G)` / `count(Unique Users)` |
-| **Correction Funnel** | 조회 → 실행 → 선택 전환율 | **Funnel Chart** | `A` → `B` → `C` 단계별 카운트 |
+기존 **Old Spec (Phase 1, 1.5)** 지표를 해당 노드의 Inspector로 이동.
 
----
+| 클릭 노드 | 포함되는 Old Spec 지표 (Metric) | 시각화 방식 |
+| :--- | :--- | :--- |
+| **API Server** | • **Total Traffic** (누적 요청 수)<br>• **System Latency** (응답 속도 추이) | Big Number<br>Line Chart |
+| **Mongo DB** | • **Category Dist.** (입력 문장 카테고리 분포)<br>• **Drafting vs Polishing** (수정 패턴) | Donut Chart<br>Histogram |
+| **Redis** | • **Cache Hit Rate** (캐시 적중률)<br>• **Macro ETL Trigger** (재분석 횟수) | Gauge Chart<br>Bar Chart |
+| **GenAI (Macro)** | • **Adaptive Weight ($\alpha$)** (문서 길이별 가중치) | Scatter Plot |
+| **Emb Model** | • **Latency (Real-time)** (임베딩 속도) | Metric |
+| **GenAI (Run)** | • **Cost Est.** (비용 추정)<br>• **Token Usage** | Metric & Table |
 
-### **🟦🟧 Phase 3: 유저 프로파일링 (Personalization)**
+-----
 
-- **핵심 메시지:** "사용자들의 성향을 군집화하여 이해하고 있습니다."
-- **주요 데이터 소스:** `G` (유저 임베딩), `J` (클러스터)
+### **PAGE 1: 💎 Data Flow & Assets (Phase 2)**
 
-| **지표명 (Metric)** | **설명** | **시각화 방식** | **쿼리 로직 (Pseudo)** |
-| --- | --- | --- | --- |
-| **User Cluster Map** | 유저 성향 군집 지도 (t-SNE 차원축소) | **2D Scatter** | `G.user_embedding_v1` 시각화 |
-| **Cluster Tendency** | 군집별 선호 스타일 (격식체 vs 구어체 등) | **Radar Chart** | `J.style_distribution` |
-| **Personalization Lift** | 개인화 적용 전후 수용률 상승폭 | **Bar Chart** | `Accept Rate (Phase 2 vs 3)` |
+**목적:** 데이터가 \*\*'학습 데이터(H)'\*\*로 변환되는 과정을 증명.
 
----
+#### **(1) Pipeline Flow (Sankey Diagram)**
 
-### **🟥 Phase 4: 생성형 자동화 (Automation)**
+  * **대체:** 기존 `Correction Funnel` (Funnel Chart)를 Sankey로 고도화.
+  * **Flow:** `View (A)` → `Run (B)` → `Accept (C)` → `Golden Data (H)`
+  * **Insight:** 단계별 이탈률 및 최종 전환율.
 
-- **핵심 메시지:** "AI가 유저의 업무 시간을 획기적으로 단축시켰습니다."
-- **주요 데이터 소스:** `B` (자동생성 로그), `C` (선택 로그)
+#### **(2) Data Asset Metrics (Old Spec 유지)**
 
-| **지표명 (Metric)** | **설명** | **시각화 방식** | **쿼리 로직 (Pseudo)** |
-| --- | --- | --- | --- |
-| **Zero-Shot Acceptance** | 유저가 수정 없이 AI 제안을 즉시 수락한 비율 | **Donut Chart** | `C` where `is_auto_prompt=True` |
-| **Keystrokes Saved** | 자동화로 인해 절약된 총 타이핑 횟수 | **Big Number** | `sum(len(accepted_text))` |
-| **Auto-Style Trends** | AI가 주로 제안하는 인기 스타일 트렌드 | **Treemap** | `B.auto_generated_prompt` 키워드 |
-| **ROI / Token Efficiency** | 토큰 비용 대비 수용 효과 (비용 효율성) | **Line Chart** | `Accepted Count` / `Token Usage` |
+  * **Micro Contexts:** 수집된 문장/벡터 자산 규모 (`count(E)`).
+  * **Golden Data Count:** 정합성 검증 완료 데이터 수 (`count(H)`).
+  * **Acceptance Rate:** 1순위 추천 수용률 (`count(C)/count(A)`).
+  * **User Coverage:** 프로필 분석 완료 유저 비율 (`count(G)`).
 
----
+-----
 
-## **3. 구현 가이드**
+### **PAGE 2: 👤 User Insights (Phase 3)**
 
-### **(1) 디렉토리 구조**
+**목적:** 사용자 성향 분석 (Old Spec Phase 3 전체 포함).
+
+#### **(1) User Cluster Map**
+
+  * **지표:** `User Cluster Map` (유저 성향 군집 지도).
+  * **Visual:** 2D Scatter Plot (t-SNE of `G.user_embedding`).
+
+#### **(2) Style Analysis**
+
+  * **지표:** `Cluster Tendency` (군집별 선호 스타일).
+  * **Visual:** Radar Chart (격식체 vs 구어체 등).
+
+#### **(3) Impact**
+
+  * **지표:** `Personalization Lift` (개인화 적용 전후 수용률 상승폭).
+  * **Visual:** Bar Chart.
+
+-----
+
+### **PAGE 3: 🤖 Auto-Gen ROI (Phase 4)**
+
+**목적:** AI 자동화의 비즈니스 임팩트 증명 (Old Spec Phase 4 전체 포함).
+
+#### **(1) Automation Success**
+
+  * **지표:** `Zero-Shot Acceptance` (수정 없이 즉시 수락 비율).
+  * **Visual:** Donut Chart.
+
+#### **(2) Efficiency Metrics**
+
+  * **지표:** `Keystrokes Saved` (절약된 타이핑 횟수).
+  * **지표:** `ROI / Token Efficiency` (토큰 비용 대비 수용 효과).
+  * **Visual:** Big Number, Line Chart.
+
+#### **(3) Trend**
+
+  * **지표:** `Auto-Style Trends` (AI가 제안하는 인기 스타일).
+  * **Visual:** Treemap (Word Cloud).
+
+-----
+
+## **3. 구현 가이드 (Directory Structure)**
+
+모든 Phase 페이지를 포함하도록 디렉토리를 구성합니다.
 
 ```markdown
 sentencify-mvp/
 ├── dashboard/
-│   ├── app.py           # Streamlit 메인 엔트리
-│   ├── pages/           # 페이지 분리
-│   │   ├── 1_Overview.py
-│   │   ├── 2_Data_Assets.py
-│   │   └── 3_User_Insights.py
-│   ├── queries/         # DB 조회 로직 분리 (pymongo, redis)
-│   ├── components/      # 재사용 차트 컴포넌트
-│   ├── requirements.txt
+│   ├── app.py                  # [Entry] Sidebar Logic (Filter, Refresh) & Navigation
+│   ├── pages/
+│   │   ├── 0_System_Map.py     # [Page 0] Topology & Inspector (Phase 1, 1.5)
+│   │   ├── 1_Data_Flow.py      # [Page 1] Sankey & Assets (Phase 2)
+│   │   ├── 2_User_Insights.py  # [Page 2] Cluster & Trends (Phase 3)
+│   │   └── 3_Auto_Gen_ROI.py   # [Page 3] Automation Impact (Phase 4)
+│   ├── components/
+│   │   ├── topology_graph.py   # Agraph Config
+│   │   ├── inspector.py        # Inspector Renderer (Metric Charts)
+│   │   └── charts.py           # Reusable Plotly Charts (Sankey, Radar, etc.)
+│   ├── queries/                # DB Aggregation (Apply User Filter here)
+│   ├── requirements.txt        # streamlit-agraph, plotly, pymongo, redis
 │   └── Dockerfile
-└── docker-compose.yml   # dashboard 서비스 추가
 ```
 
-### **(2) 데이터 조회 전략**
+### **4. 개발 시 주의사항 (Programmer Instructions)**
 
-- **실시간성:** `TTL=5m` 정도의 캐싱(`@st.cache_data`)을 사용하여 DB 부하 방지.
-- **대용량 처리:** `H`나 `A` 테이블이 커질 경우, Streamlit에서 `limit`을 걸거나 집계 쿼리(`aggregate`)만 실행하도록 최적화 필요.
+1.  **Demo Ready:** `queries/` 내의 모든 함수는 `user_id` 인자를 받아 필터링할 수 있어야 합니다. (데모 시 특정 유저 데이터만 시각화).
+2.  **Graceful Degradation:** Phase 3, 4 데이터가 아직 DB에 없더라도 대시보드가 에러를 뱉지 않도록 `try-except` 처리를 하거나, **"Data Pending"** 상태를 표시하십시오. (테이블이 없으면 빈 차트 출력).
+3.  **Strict Schema Adherence:** 모든 지표는 앞서 정의된 스키마 `A`\~`L`의 필드만을 사용하여 계산해야 합니다. 새로운 컬럼을 만들지 마십시오.
+
+-----
+
+이 명세서는 사용자님의 \*\*기존 전체 스펙(Phase 1\~4)\*\*을 완벽히 수용하면서, **데모 시연용 기능**과 **인터랙티브 시각화**를 덧입힌 최종 버전입니다.

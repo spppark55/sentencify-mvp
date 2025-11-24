@@ -816,3 +816,78 @@
 
 ### 3. Status
 - This work completes the final implementation and verification for the Phase 2 Dashboard's backend analytics, specifically the Correction Funnel and User Coverage metrics. The integration test now passes, confirming the data pipeline from logs to dashboard queries is working correctly.
+
+---
+
+## 2025-11-24 – Dashboard v2.4 Control Tower 구축
+
+### 완료 항목
+- [x] 의존성 정리: `dashboard/requirements.txt`에 `streamlit-agraph` 추가.
+- [x] 데이터 레이어 재구성: `dashboard/queries/` 패키지 신설 (`mongo.py`, `__init__.py`)로 v2.4 스키마(A~L) 기준 조회/헬스체크/플로우/비용 계산 함수 구현 및 `user_id` 필터 공통 적용.
+- [x] UI 컴포넌트 추가: `dashboard/components/`에 `topology_graph.py`(agraph 토폴로지), `inspector.py`(노드별 메트릭), `charts.py`(Sankey/latency 차트) + `__init__.py`.
+- [x] 메인 앱 교체: `dashboard/app.py`에서 사이드바 헬스체크(🟢/🔴), `user_id` 필터, 5초 자동 새로고침 토글, A 이벤트 라이브 티커 구현.
+- [x] 페이지 교체: `dashboard/pages/0_System_Map.py`, `1_Data_Flow.py`, `2_User_Insights.py`, `3_Auto_Gen_ROI.py` 신설(Phase 2~4 데이터 없을 시 try/except로 mock/“Data pending” 처리). 기존 Phase1.x 페이지 삭제.
+
+### 비고
+- Redis/Vector 헬스체크는 env 기반 TCP/INFO 조회, 데이터 미존재 시 0/False로 폴백.
+- LLMOps 비용은 `B` 카운트 × 고정 단가(0.002) 단순 계산. Macro 큐는 `K.diff_ratio>=0.1`.
+- 토폴로지 활성화 조건은 최근 10초 이내 이벤트 존재 여부로 산정.
+
+---
+
+## 2025-11-24 – Topology 고정 & 트래픽 시뮬레이터 추가
+
+### 완료 항목
+- [x] 토폴로지 정적 레이아웃: `dashboard/components/topology_graph.py`에서 physics 비활성화, x/y 좌표 하드코딩(0~800, 0~600)으로 노드 고정.
+- [x] Inspector 지속성: `dashboard/pages/0_System_Map.py`에서 선택 노드를 `st.session_state['selected_node']`에 보존해 새로고침에도 유지.
+- [x] 실시간 시뮬레이터: `scripts/simulate_traffic.py` 추가. 2s 주기 A, 5s B, 10s C, 30s K(diff=0.15) 이벤트 생성하며 랜덤 latency_ms로 대시보드 변동 확인 가능. 콘솔 로그 출력 포함.
+
+### 비고
+- 시뮬레이터는 `MONGO_URI`/`MONGO_DB_NAME`, `REDIS_HOST`/`REDIS_PORT` 환경변수 사용, 기본은 localhost.
+- B 이벤트 수가 비용 계산 근거이며, K(diff>=0.1) 갱신으로 Macro 큐 길이 변화 테스트 가능.
+
+---
+
+## 2025-11-24 – Dashboard Connectivity & Simulator 확장
+
+### 완료 항목
+- [x] 시뮬레이터 확장: `scripts/simulate_traffic.py`가 A/B/C/K 외에 E(context_block), I(recommend_log), F(document_context_cache)까지 생성해 토폴로지 모든 노드(Emb Model, VectorDB, Redis, GenAI Macro)가 점등됨.
+- [x] Inspector 보강: `dashboard/components/inspector.py`에 Mongo/VectorDB/Worker/Emb Model 핸들러 추가. Mongo는 최근 A 3건 JSON 표시, VectorDB는 E 카운트와 Index Ready 메시지, Worker는 diff>=0.1 K 카운트, Emb Model은 I 기반 지연 시간 사용.
+- [x] VectorDB 헬스 폴백: `dashboard/queries/mongo.py`에서 TCP 실패 시 최근 1분 이내 E 문서 존재 여부로 “시뮬레이터 온라인” 판정.
+
+### 비고
+- F 생성은 K 갱신 후 2초 지연 삽입으로 Redis/GenAI Macro 활성 상태를 확인.
+- 시뮬레이터 루프 주기 1초, 이벤트 주기 A(2s)/B(5s)/C(10s)/K(30s).
+
+---
+
+## 2025-11-24 – 시각화 동적 강화 (Heatmap & Burst Flow)
+
+### 완료 항목
+- [x] 노드 열지도: `dashboard/queries/mongo.py`의 `get_node_recency_map`이 각 컴포넌트의 최근 이벤트로부터 경과 초를 반환(미존재 시 999). `topology_graph.py`가 이 값을 바탕으로 3/7/15초 구간 네온→웜→쿨→아이들 색상 적용.
+- [x] 엣지 애니메이션: `topology_graph.py` Config에 dashed curved 링크 설정으로 흐름감을 부여.
+- [x] 시스템 맵 연동: `pages/0_System_Map.py`가 새 recency 맵을 사용해 그래프/Inspector를 유지.
+- [x] 버스트 트래픽: `scripts/simulate_traffic.py`가 Burst 모드(A→0.5s→B→0.5s→C→2s→F, 매번 K 포함) 후 4~6초 휴지로 핫/쿨 전이를 명확히 표현.
+
+### 비고
+- 버스트마다 Macro diff=0.15를 트리거하고 2초 후 F를 삽입해 Redis/GenAI Macro 노드가 주기적으로 점등.
+- VectorDB 헬스는 실TCP 실패 시에도 최근 E 삽입으로 “green” 처리되어 데모 환경에서 끊김 없이 표시.
+---
+
+## 2025-11-24 – QA: Dashboard v2.4 Queries Integration Test
+
+### 1. Test Suite Implementation (`scripts/dashboard/test/test_dashboard_queries.py`)
+- **TDD Principle**: Following the Test-Driven Development principle, a new Pytest suite was created to validate the dashboard's backend queries.
+- **Mocking Environment**: The test utilizes `mongomock` and `fakeredis` to create an isolated, in-memory database environment, ensuring tests are fast, repeatable, and independent of external DB state.
+- **Seeding Logic**: A pytest fixture (`mock_db`) was implemented to seed the mock database with a precise scenario, including data for multiple users (`test_user`, `other_user`) to verify user-level filtering.
+
+### 2. Query Verification and Bug Fixes
+- **Test Coverage**: The suite validates the following key queries from `dashboard/queries/mongo.py`:
+  - `check_mongo_health()`, `check_redis_health()`
+  - `get_activity_window_map()`
+  - `get_flow_counts()`, `get_sankey_links()`
+  - `get_cost_estimate()`
+- **Bug Fix & Verification**:
+  - The integration test successfully identified and led to the fix of a data isolation bug in `get_correction_funnel_data` and `get_user_profile_coverage`.
+  - By adding optional filters to the query functions and applying them in the test, the queries now return accurate, isolated results.
+- **Status**: ✅ All tests in `test_dashboard_queries.py` now pass, confirming that the dashboard's data aggregation logic is correct and robust.

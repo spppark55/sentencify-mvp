@@ -1,80 +1,77 @@
-import streamlit as st
-import plotly.express as px
+from __future__ import annotations
 
-from queries import (
-    get_total_traffic,
-    get_micro_contexts_count,
-    get_category_distribution,
-    get_macro_etl_triggers,
-    get_adaptive_weight_stats,
-    get_cache_hit_rate,
-    get_golden_data_count,
-    get_acceptance_rate,
-    get_user_profile_coverage,
-)
+import time
+from datetime import datetime
+from typing import Optional
+
+import streamlit as st
+
+from queries import get_recent_a_events, get_system_health
 
 
 st.set_page_config(
-    page_title="Sentencify Analytics",
-    page_icon="📊",
+    page_title="Sentencify Control Tower",
+    page_icon="🛰️",
     layout="wide",
 )
 
-st.sidebar.title("Sentencify Dashboard")
-st.sidebar.markdown(
-    """
-    **Phase 2 – Analytics**
 
-    Use the navigation menu to explore metrics for each phase.
-    """
-)
+def _fmt_health(name: str, status: bool) -> str:
+    return f"{'🟢' if status else '🔴'} {name}"
 
-st.title("Sentencify Analytics Overview")
-st.caption("Consolidated KPIs across Phase 1 → Phase 2 pipelines.")
 
-traffic = get_total_traffic()
-micro_contexts = get_micro_contexts_count()
-golden = get_golden_data_count()
-accept_rate = get_acceptance_rate()
-profiles = get_user_profile_coverage()
+def _render_health() -> None:
+    health = get_system_health()
+    st.sidebar.markdown("### System Health")
+    st.sidebar.write(_fmt_health("MongoDB", health["mongo"]))
+    st.sidebar.write(_fmt_health("Redis", health["redis"]))
+    st.sidebar.write(_fmt_health("VectorDB", health["vector"]))
 
-col1, col2, col3 = st.columns(3)
-col1.metric("Total A Events", f"{traffic:,}")
-col1.metric("Golden Data (H)", f"{golden:,}")
-col2.metric("Micro Contexts (E)", f"{micro_contexts:,}")
-col2.metric("User Profiles (G)", f"{profiles:,}")
-col3.metric("Acceptance Rate", f"{accept_rate:.1%}")
-col3.metric("Cache Hit Rate", f"{get_cache_hit_rate():.1%}")
 
-st.divider()
+def _render_ticker(user_id: Optional[str]) -> None:
+    st.sidebar.markdown("### Live Ticker (A)")
+    events = get_recent_a_events(limit=5, user_id=user_id)
+    if not events:
+        st.sidebar.info("No recent A events.")
+        return
+    for ev in events:
+        ts = ev.get("created_at")
+        if isinstance(ts, datetime):
+            ts_str = ts.strftime("%H:%M:%S")
+        else:
+            ts_str = "--:--:--"
+        uid = ev.get("user_id", "unknown")
+        cat = ev.get("reco_category_input", "n/a")
+        latency = ev.get("latency_ms")
+        latency_str = f"{latency:.0f}ms" if latency is not None else "--"
+        st.sidebar.write(f"[{ts_str}] {uid} : {cat} ({latency_str})")
 
-st.subheader("Category Distribution (Phase 1)")
-category_counts = get_category_distribution()
-if category_counts:
-    fig = px.pie(
-        values=list(category_counts.values()),
-        names=list(category_counts.keys()),
-        hole=0.4,
-        title="Recommendation Category Share",
+
+def _sidebar_controls() -> Optional[str]:
+    st.sidebar.title("Sentencify v2.4 Control Tower")
+    user_id = st.sidebar.text_input("User ID Filter (optional)")
+    st.session_state["user_filter"] = user_id or None
+
+    auto = st.sidebar.toggle("Auto-Refresh (5s)", value=False)
+    if auto:
+        time.sleep(5)
+        st.experimental_rerun()
+
+    _render_health()
+    _render_ticker(user_id or None)
+    return user_id or None
+
+
+def main() -> None:
+    user_id = _sidebar_controls()
+    st.title("Sentencify Dashboard")
+    st.caption("Sidecar Streamlit dashboard — Read-only control tower for v2.4.")
+    st.info(
+        "Use the sidebar to filter by user_id and enable auto-refresh. "
+        "Navigate pages via the left navigation."
     )
-    st.plotly_chart(fig, use_container_width=True)
-else:
-    st.info("No category data available.")
+    st.write(f"Active user filter: `{user_id or 'None'}`")
 
-st.subheader("Macro ETL & Adaptive Weight")
-col_a, col_b = st.columns(2)
-macro_stats = get_macro_etl_triggers()
-if macro_stats["total"]:
-    ratio = macro_stats["triggered"] / macro_stats["total"]
-else:
-    ratio = 0.0
-col_a.metric(
-    "Diff ≥ 0.1 (Macro Trigger)",
-    f"{macro_stats['triggered']}/{macro_stats['total']}",
-    f"{ratio:.1%}",
-)
-alpha_stats = get_adaptive_weight_stats()
-col_b.metric("Avg α", f"{alpha_stats['avg_alpha']:.2f}")
-col_b.write(f"Min α: {alpha_stats['min_alpha']:.2f} | Max α: {alpha_stats['max_alpha']:.2f}")
 
-st.success("Navigate to the Phase-specific pages via the sidebar for deeper insights.")
+if __name__ == "__main__":
+    main()
