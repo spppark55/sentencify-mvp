@@ -1,113 +1,116 @@
-import uuid
 import json
-from datetime import datetime, timedelta
+import random
+import uuid
+import csv
+from pathlib import Path
 
-# 1. 공통 세션 및 ID 생성 (The Chain)
-session_id = str(uuid.uuid4())  # recommend_session_id
-log_a_id = str(uuid.uuid4())    # insert_id (A의 PK, B/C의 FK)
-doc_id = "doc_sample_001"
-user_id = "user_test_01"
-timestamp = datetime.utcnow()
+# 설정
+BASE_DIR = Path(__file__).parent.parent
+PERSONA_FILE = BASE_DIR / "data" / "personas.json"
+DATA_FILE = BASE_DIR / "api" / "test_data.csv"
+OUTPUT_FILE = BASE_DIR / "mock_golden_scenario.json"
 
-def get_timestamp(offset_seconds=0):
-    return (timestamp + timedelta(seconds=offset_seconds)).isoformat() + "Z"
+SESSION_COUNT = 100  # 생성할 총 세션 수
 
-# ---------------------------------------------------------
-# [Step 1] Log A: 추천 발생 (Correction Required)
-# ---------------------------------------------------------
-log_a = {
-    "insert_id": log_a_id,              # [MISSING IN CODE] 아키텍처 필수 필드
-    "recommend_session_id": session_id, # [MISSING IN CODE] 아키텍처 필수 필드
-    "doc_id": doc_id,
-    "user_id": user_id,
-    "reco_options": [
-        {"category": "email", "strength": "moderate", "text": "좀 더 정중하게"},
-        {"category": "report", "strength": "strong", "text": "보고서 톤으로"}
-    ],
-    "P_vec": {"email": 0.8, "report": 0.4},
-    "P_doc": {"email": 0.9, "report": 0.2}, # Phase 1.5+
-    "applied_weight_doc": 0.4,
-    "doc_maturity_score": 0.7,
-    "created_at": get_timestamp(0),
-    "model_version": "v2.3"
-}
+def load_personas():
+    with open(PERSONA_FILE, "r", encoding="utf-8") as f:
+        return json.load(f)
 
-# ---------------------------------------------------------
-# [Step 2] Log B: 실행 (Run Paraphrasing)
-# ---------------------------------------------------------
-log_b = {
-    "insert_id": str(uuid.uuid4()),
-    "source_recommend_event_id": log_a_id, # A를 가리킴 (Link)
-    "recommend_session_id": session_id,    # 세션 공유
-    "user_id": user_id,
-    "doc_id": doc_id,
-    "target_language": "ko",
-    "tone": "polite",
-    "field": "email",
-    "input_sentence_length": 15,
-    "created_at": get_timestamp(2) # 2초 뒤 실행
-}
+def load_sentences():
+    sentences = []
+    if not DATA_FILE.exists():
+        print(f"⚠️ {DATA_FILE} not found. Using dummy sentences.")
+        return [{"text": "This is a dummy sentence.", "label": "thesis"}]
+    
+    with open(DATA_FILE, "r", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            if "text" in row and "label" in row:
+                sentences.append(row)
+    return sentences
 
-# ---------------------------------------------------------
-# [Step 3] Log D: Ground Truth 생성 (선택 직전/직후 생성)
-# ---------------------------------------------------------
-# D는 DB(_id)가 생성되면서 ID가 부여됨을 가정
-log_d_id = str(uuid.uuid4()) 
+def generate_scenario():
+    personas = load_personas()
+    all_sentences = load_sentences()
+    
+    scenarios = []
+    
+    for _ in range(SESSION_COUNT):
+        # 1. Pick Persona
+        persona = random.choices(personas, weights=[p["weight"] for p in personas], k=1)[0]
+        
+        # 2. Pick Sentence (Context)
+        # 페르소나 선호 카테고리와 일치하는 문장 필터링
+        candidates = [s for s in all_sentences if s["label"] in persona["preference"]["categories"]]
+        if not candidates:
+            candidates = all_sentences # Fallback
+        
+        target_content = random.choice(candidates)
+        
+        # 3. Define Actions
+        user_id = f"sim_{persona['id']}_{str(uuid.uuid4())[:8]}"
+        doc_id = str(uuid.uuid4())
+        
+        session_data = {
+            "user_id": user_id,
+            "doc_id": doc_id,
+            "text": target_content["text"],
+            "ground_truth_category": target_content["label"],
+            "persona_id": persona["id"],
+            "actions": []
+        }
+        
+        # 3. Define Flow based on probabilities
+        probs = persona["behavior_probs"]
+        rand_val = random.random()
+        
+        flow_type = "no_action"
+        if rand_val < probs["run_rate"]:
+            # Run을 하긴 할 건데, 수정해서 할 거냐(modify_rate) 그대로 할 거냐?
+            # (Note: modify_rate logic interpretation: probability to modify IF running)
+            if random.random() < probs["modify_rate"]:
+                flow_type = "modify_reco"
+            else:
+                flow_type = "accept_reco"
+        
+        # 4. Construct Actions
+        session_data["expected_flow"] = flow_type
+        
+        # Action A: Recommend (Always)
+        session_data["actions"].append({"type": "recommend"})
+        
+        if flow_type in ["accept_reco", "modify_reco"]:
+            # Action B: Paraphrase
+            # Crucial: Always use the Persona's PREFERRED Intensity and Language.
+            # This ensures P_user learns "Scholar -> Strong", "Biz -> English".
+            # Category is set to the Ground Truth (context label) to ensure valid input.
+            
+            run_opts = {
+                "category": target_content["label"],
+                "intensity": persona["preference"]["intensity"],
+                "language": persona["preference"]["language"]
+            }
 
-log_d = {
-    "_id": log_d_id,
-    "user": user_id,
-    "field": "email",
-    "intensity": "moderate",
-    "user_prompt": "좀 더 정중하게",
-    "input_sentence": "이거 해줘",
-    "output_sentences": ["이것을 처리해 주시겠습니까?", "이 업무를 부탁드립니다."],
-    "selected_index": 0,
-    "created_at": get_timestamp(4)
-}
+            session_data["actions"].append({
+                "type": "paraphrase",
+                "options": run_opts
+            })
+            
+            # Action C: Select
+            if random.random() < probs["select_rate"]:
+                session_data["actions"].append({
+                    "type": "select",
+                    "accepted": True
+                })
 
-# ---------------------------------------------------------
-# [Step 4] Log C: 선택 (Selection)
-# ---------------------------------------------------------
-log_c = {
-    "insert_id": str(uuid.uuid4()),
-    "source_recommend_event_id": log_a_id, # A를 가리킴
-    "recommend_session_id": session_id,    # 세션 공유
-    "correction_history_id": log_d_id,     # D를 가리킴 (Link)
-    "user_id": user_id,
-    "was_accepted": True,
-    "index": 0,
-    "field": "email",
-    "created_at": get_timestamp(5) # 5초 뒤 선택
-}
 
-# ---------------------------------------------------------
-# [Step 5] Context Block E (Micro Context)
-# ---------------------------------------------------------
-context_e = {
-    "context_hash": "hash_xyz_123", # 실제론 hash(doc_id + text)
-    "doc_id": doc_id,
-    "user_id": user_id,
-    "selected_text": "이거 해줘",
-    "context_prev": "안녕하세요.",
-    "context_next": "감사합니다.",
-    "embedding_v1": [0.123] * 768, # 768-dim Mock Vector
-    "created_at": get_timestamp(0)
-}
+        
+        scenarios.append(session_data)
+        
+    with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
+        json.dump(scenarios, f, indent=2, ensure_ascii=False)
+        
+    print(f"✅ Generated {len(scenarios)} scenarios at {OUTPUT_FILE}")
 
-# ---------------------------------------------------------
-# 출력
-# ---------------------------------------------------------
-dataset = {
-    "A": log_a,
-    "B": log_b,
-    "C": log_c,
-    "D": log_d,
-    "E": context_e
-}
-
-print(json.dumps(dataset, indent=2, ensure_ascii=False))
-
-# 저장 파일 생성 (선택 사항)
-with open("mock_golden_scenario.json", "w", encoding="utf-8") as f:
-    json.dump(dataset, f, indent=2, ensure_ascii=False)
+if __name__ == "__main__":
+    generate_scenario()

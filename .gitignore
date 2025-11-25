@@ -14,3 +14,4 @@ api/train_data.csv
 project_dir.txt
 .tmp.drive*
 models/*
+GEMINI.md
