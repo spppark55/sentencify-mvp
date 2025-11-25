@@ -18,7 +18,7 @@ from .auth import auth_router
 
 from app.prompts import build_paraphrase_prompt
 from app.qdrant.service import compute_p_vec
-from app.redis.client import get_macro_context
+from app.redis.client import get_macro_context, get_llm_cache, set_llm_cache
 from app.services.macro_service import analyze_and_cache_macro_context
 from app.services.classifier_service import ClassifierService
 from app.utils.embedding import get_embedding, embedding_service
@@ -223,6 +223,18 @@ def _clean_candidates(raw_text: str, fallback: str) -> List[str]:
     while len(cleaned) < 3:
         cleaned.append(fallback)
     return cleaned[:3]
+
+
+def _normalize_for_cache(text: str) -> str:
+    """
+    Normalize text to increase cache hit rate.
+    - Trim whitespace
+    - Remove trailing punctuation (.,!?;:)
+    Example: "Hello world. " -> "Hello world"
+    """
+    if not text:
+        return ""
+    return text.strip().rstrip(".,!?;:")
 
 
 def append_jsonl(filename: str, payload: Dict) -> None:
@@ -521,6 +533,38 @@ async def paraphrase(req: ParaphraseRequest) -> ParaphraseResponse:
     intensity = req.intensity or "moderate"
     event_id = str(uuid.uuid4())
 
+    # Cache Key Generation (Normalized)
+    # Normalize text: "Hello." and "Hello" will share the same cache key
+    normalized_text = _normalize_for_cache(req.selected_text)
+    raw_key = f"{normalized_text}|{category}|{intensity}|{language}|{req.style_request or ''}"
+    cache_key = f"llm:para:{hashlib.sha256(raw_key.encode()).hexdigest()}"
+
+    # 1. Check Redis Cache
+    cached_candidates = await get_llm_cache(cache_key)
+    if cached_candidates:
+        print(f"[Cache] Hit for key={cache_key}")
+        # Log even on cache hit (optional, but good for tracking usage)
+        b_event = {
+            "event": "editor_run_paraphrasing",
+            "event_id": event_id,
+            "source_recommend_event_id": req.source_recommend_event_id,
+            "recommend_session_id": req.recommend_session_id,
+            "doc_id": req.doc_id,
+            "user_id": req.user_id,
+            "selected_text": req.selected_text,
+            "context_prev": req.context_prev,
+            "context_next": req.context_next,
+            "target_category": category,
+            "target_language": language,
+            "target_intensity": intensity,
+            "style_request": req.style_request,
+            "created_at": _now_iso(),
+            "paraphrase_llm_version": "cache-hit", # Mark as cache hit
+        }
+        produce_b_event(b_event)
+        return ParaphraseResponse(candidates=cached_candidates)
+
+    # 2. Cache Miss -> Call LLM
     b_event = {
         "event": "editor_run_paraphrasing",
         "event_id": event_id,
@@ -565,6 +609,11 @@ async def paraphrase(req: ParaphraseRequest) -> ParaphraseResponse:
             response.choices[0].message.content if response.choices else ""
         ) or ""
         candidates = _clean_candidates(raw_text, fallback_text)
+        
+        # 3. Set Cache
+        if candidates and candidates != fallback_candidates:
+            await set_llm_cache(cache_key, candidates)
+            
         return ParaphraseResponse(candidates=candidates)
     except Exception as exc:
         print(f"[OpenAI] Error during chat completion: {exc}")

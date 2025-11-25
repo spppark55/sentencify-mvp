@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from typing import Optional
 
@@ -68,3 +69,27 @@ async def get_macro_context(doc_id: str) -> Optional[DocumentContextCache]:
     if payload is None:
         return None
     return DocumentContextCache.model_validate_json(payload)
+
+
+async def set_llm_cache(key: str, candidates: list[str], ttl: int = 86400) -> None:
+    """
+    Cache LLM paraphrase candidates.
+    TTL default: 24 hours (86400 seconds).
+    """
+    client = get_redis_client()
+    payload = json.dumps(candidates, ensure_ascii=False)
+    await client.set(key, payload, ex=ttl)
+
+
+async def get_llm_cache(key: str) -> Optional[list[str]]:
+    """
+    Retrieve cached LLM paraphrase candidates.
+    """
+    client = get_redis_client()
+    payload = await client.get(key)
+    if payload is None:
+        return None
+    try:
+        return json.loads(payload)
+    except json.JSONDecodeError:
+        return None

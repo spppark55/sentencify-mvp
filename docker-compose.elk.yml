@@ -34,8 +34,8 @@ services:
       - ./elk/logstash/config/logstash.yml:/usr/share/logstash/config/logstash.yml:ro
       - ./elk/logstash/pipeline:/usr/share/logstash/pipeline:ro
     ports:
-      - "5000:5000/tcp"
-      - "5000:5000/udp"
+      - "5001:5000/tcp"
+      - "5001:5000/udp"
       - "9600:9600"
     networks:
       - sentencify-net
