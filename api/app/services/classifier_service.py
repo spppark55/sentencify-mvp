@@ -65,10 +65,22 @@ class ClassifierService:
             prob_vector = probs[0].cpu().numpy().tolist()
             result = {}
             
+            # Standardize Keys (Korean -> English)
+            CATEGORY_MAP = {
+                "논문": "thesis",
+                "보고서": "report",
+                "기사": "article",
+                "마케팅": "marketing",
+                "상담": "customer_service"
+                # "이메일" is removed
+            }
+
             if self.id2label:
                 for idx, score in enumerate(prob_vector):
-                    label = self.id2label.get(idx, str(idx))
-                    result[label] = score
+                    label_ko = self.id2label.get(idx, str(idx))
+                    if label_ko in CATEGORY_MAP:
+                        label_en = CATEGORY_MAP[label_ko]
+                        result[label_en] = score
             else:
                 # Fallback if no label map
                 for idx, score in enumerate(prob_vector):

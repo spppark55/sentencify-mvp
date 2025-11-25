@@ -44,6 +44,7 @@ class RecommendOption(BaseModel):
     category: str
     language: str
     intensity: str
+    user_prompt: Optional[str] = None
 
 
 class RecommendResponse(BaseModel):
@@ -71,7 +72,7 @@ class ParaphraseRequest(BaseModel):
     category: Optional[str] = "general"
     language: Optional[str] = "ko"
     intensity: Optional[str] = "moderate"
-    style_request: Optional[str] = None
+    user_prompt: Optional[str] = None
     recommend_session_id: Optional[str] = None
     source_recommend_event_id: Optional[str] = None
 
@@ -260,7 +261,7 @@ def produce_i_event(payload: Dict) -> None:
     producer = get_kafka_producer()
     if producer is not None:
         try:
-            producer.send("model_score", value=payload)
+            producer.send("recommend_log", value=payload)
         except Exception:
             pass
 
@@ -376,7 +377,7 @@ async def recommend(req: RecommendRequest) -> RecommendResponse:
         p_rule = _classifier_service.predict_p_rule(context_full)
     else:
         # Fallback stub if service not loaded
-        p_rule = {"thesis": 0.5, "email": 0.3, "article": 0.2}
+        p_rule = {"thesis": 0.5, "report": 0.3, "article": 0.2}
     
     print(f"[TRACE][recommend] P_rule={p_rule}", flush=True)
 
@@ -395,7 +396,7 @@ async def recommend(req: RecommendRequest) -> RecommendResponse:
     except Exception as e:
         print(f"[ERROR] P_vec calculation failed: {e}", flush=True)
         traceback.print_exc()
-        p_vec = {"thesis": 0.7, "email": 0.2, "article": 0.1}
+        p_vec = {"thesis": 0.7, "report": 0.2, "article": 0.1}
 
     p_doc: Dict[str, float] = {}
     if macro_context:
@@ -408,25 +409,31 @@ async def recommend(req: RecommendRequest) -> RecommendResponse:
     doc_length = len(doc_text_for_len)
     doc_maturity = calculate_maturity_score(doc_length)
     alpha = calculate_alpha(doc_maturity)
-    print(
-        f"[TRACE][recommend] doc_length={doc_length} maturity={doc_maturity:.4f} alpha={alpha:.4f}",
-        flush=True,
-    )
+    
+    print(f"\n[SCORING DEBUG]")
+    print(f"Doc Length: {doc_length}, Maturity: {doc_maturity:.4f}, Alpha (Macro Weight): {alpha:.4f}")
+    print(f"P_vec:  {json.dumps(p_vec, ensure_ascii=False)}")
+    print(f"P_rule: {json.dumps(p_rule, ensure_ascii=False)}")
+    print(f"P_doc:  {json.dumps(p_doc, ensure_ascii=False)}")
 
     score_categories = set(p_vec) | set(p_doc)
     if not score_categories:
         score_categories = set(p_rule)
 
-    RULE_WEIGHT = 0.3
-    vec_weight = (1 - RULE_WEIGHT) * (1 - alpha)
-    doc_weight = (1 - RULE_WEIGHT) * alpha
+    # Revised Formula: alpha * P_doc + (1-alpha) * (w_vec * P_vec + w_rule * P_rule)
+    W_VEC = 0.6
+    W_RULE = 0.4
+    
     final_scores: Dict[str, float] = {}
     for k in score_categories:
-        final_scores[k] = (
-            vec_weight * p_vec.get(k, 0.0)
-            + doc_weight * p_doc.get(k, 0.0)
-            + RULE_WEIGHT * p_rule.get(k, 0.0)
-        )
+        score_doc = p_doc.get(k, 0.0)
+        score_vec = p_vec.get(k, 0.0)
+        score_rule = p_rule.get(k, 0.0)
+        
+        micro_score = (W_VEC * score_vec) + (W_RULE * score_rule)
+        final_scores[k] = (alpha * score_doc) + ((1 - alpha) * micro_score)
+
+    print(f"Final Scores: {json.dumps(final_scores, ensure_ascii=False)}\n")
 
     best_category = max(final_scores, key=final_scores.get)
     language = req.language or "ko"
@@ -437,6 +444,7 @@ async def recommend(req: RecommendRequest) -> RecommendResponse:
             category=best_category,
             language=language,
             intensity=intensity,
+            user_prompt=None,
         )
     ]
     print(
@@ -476,7 +484,7 @@ async def recommend(req: RecommendRequest) -> RecommendResponse:
     produce_a_event(a_event)
 
     i_event = {
-        "event": "model_score",
+        "event": "recommend_log",
         "insert_id": str(uuid.uuid4()),
         "source_recommend_event_id": insert_id,
         "recommend_session_id": recommend_session_id,
@@ -536,7 +544,7 @@ async def paraphrase(req: ParaphraseRequest) -> ParaphraseResponse:
     # Cache Key Generation (Normalized)
     # Normalize text: "Hello." and "Hello" will share the same cache key
     normalized_text = _normalize_for_cache(req.selected_text)
-    raw_key = f"{normalized_text}|{category}|{intensity}|{language}|{req.style_request or ''}"
+    raw_key = f"{normalized_text}|{category}|{intensity}|{language}|{req.user_prompt or ''}"
     cache_key = f"llm:para:{hashlib.sha256(raw_key.encode()).hexdigest()}"
 
     # 1. Check Redis Cache
@@ -557,7 +565,7 @@ async def paraphrase(req: ParaphraseRequest) -> ParaphraseResponse:
             "target_category": category,
             "target_language": language,
             "target_intensity": intensity,
-            "style_request": req.style_request,
+            "user_prompt": req.user_prompt,
             "created_at": _now_iso(),
             "paraphrase_llm_version": "cache-hit", # Mark as cache hit
         }
@@ -578,7 +586,7 @@ async def paraphrase(req: ParaphraseRequest) -> ParaphraseResponse:
         "target_category": category,
         "target_language": language,
         "target_intensity": intensity,
-        "style_request": req.style_request,
+        "user_prompt": req.user_prompt,
         "created_at": _now_iso(),
         "paraphrase_llm_version": "gpt-4.1-nano",
     }
@@ -594,7 +602,7 @@ async def paraphrase(req: ParaphraseRequest) -> ParaphraseResponse:
             category=category,
             intensity=intensity,
             language=language,
-            style_request=req.style_request,
+            user_prompt=req.user_prompt,
             context_prev=req.context_prev,
             context_next=req.context_next,
         )

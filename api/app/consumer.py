@@ -183,24 +183,23 @@ class SmartRouter:
         self.batchers["corporate_select_logs"].add(select_doc)
         self.batchers["log_c_select"].add(log_c)
 
-        if payload.get("was_accepted"):
-            outputs = (
-                payload.get("output_sentences")
-                or payload.get("paraphrasing_candidates")
-                or ([payload.get("selected_candidate_text")] if payload.get("selected_candidate_text") else [])
-            )
-            correction = CorrectionHistory(
-                user=payload.get("user_id"),
-                field=enriched.get("field"),
-                intensity=enriched.get("maintenance"),
-                user_prompt=payload.get("user_prompt"),
-                input_sentence=payload.get("input_sentence")
-                or payload.get("original_text")
-                or payload.get("selected_text"),
-                output_sentences=outputs,
-                selected_index=payload.get("index"),
-            )
-            self.batchers["correction_history"].add(correction)
+        outputs = (
+            payload.get("output_sentences")
+            or payload.get("paraphrasing_candidates")
+            or ([payload.get("selected_candidate_text")] if payload.get("selected_candidate_text") else [])
+        )
+        correction = CorrectionHistory(
+            user=payload.get("user_id"),
+            field=enriched.get("field"),
+            intensity=enriched.get("maintenance"),
+            user_prompt=payload.get("user_prompt"),
+            input_sentence=payload.get("input_sentence")
+            or payload.get("original_text")
+            or payload.get("selected_text"),
+            output_sentences=outputs,
+            selected_index=payload.get("index"),
+        )
+        self.batchers["correction_history"].add(correction)
 
     def _handle_recommend(self, payload: Dict[str, Any]) -> None:
         log_a = LogA(

@@ -40,10 +40,16 @@ async def analyze_and_cache_macro_context(
     if not full_text or len(full_text) < 10 or _client is None:
         return None
 
-    truncated_text = full_text[:3000]
+    if len(full_text) <= 3000:
+        truncated_text = full_text
+    else:
+        head = full_text[:1500]
+        tail = full_text[-1500:]
+        truncated_text = f"{head}\n\n...[snipped middle part]...\n\n{tail}"
+
     prompt = (
         "Analyze the following text and extract the 'macro_topic' (short summary, max 30 words) "
-        "and 'macro_category_hint' (one of: thesis, email, report, article, marketing, customer_service).\n"
+        "and 'macro_category_hint' (one of: thesis, report, article, marketing, customer_service).\n"
         'Return ONLY a valid JSON object: {"topic": "...", "category": "..."}\n'
         f"Text: {truncated_text}"
     )

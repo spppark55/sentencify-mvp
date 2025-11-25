@@ -8,8 +8,8 @@ export default function OptionPanel({
   setLanguage,
   strength,
   setStrength,
-  requestText,
-  setRequestText,
+  userPrompt,
+  setUserPrompt,
   optEnabled,
   setOptEnabled,
   onRun,
@@ -131,12 +131,11 @@ export default function OptionPanel({
           onChange={(e) => setCategory(e.target.value)}
         >
           <option value="none">없음</option>
-          <option value="email">이메일</option>
           <option value="thesis">논문</option>
           <option value="report">보고서</option>
           <option value="article">기사</option>
           <option value="marketing">마케팅</option>
-          <option value="custome_service">고객 상담</option>
+          <option value="customer_service">고객 상담</option>
         </select>
 
       </div>
@@ -246,8 +245,8 @@ export default function OptionPanel({
         <textarea
           className="flex w-full mt-2 border rounded p-2 text-sm"
           placeholder="예) 더 간결하고 자연스럽게 바꿔줘"
-          value={requestText}
-          onChange={(e) => setRequestText(e.target.value)}
+          value={userPrompt}
+          onChange={(e) => setUserPrompt(e.target.value)}
         />
       </div>
 

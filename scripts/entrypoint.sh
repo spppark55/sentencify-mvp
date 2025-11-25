@@ -9,5 +9,12 @@ else
     echo "⏩ Skipping Qdrant Initialization (Set RUN_INIT=true to run)"
 fi
 
-echo "Starting Server..."
-exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+# 인자가 있으면(예: python -m app.consumer) 그 명령어를 실행
+if [ "$#" -gt 0 ]; then
+    echo "🚀 Executing command: $@"
+    exec "$@"
+else
+    # 인자가 없으면 기본적으로 API 서버 실행
+    echo "🚀 Starting API Server..."
+    exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+fi

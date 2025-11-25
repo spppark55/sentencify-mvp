@@ -8,8 +8,7 @@ CATEGORY_GUIDES = {
     "article": "기사 스타일로, 간결하고 명확한 표현을 사용하세요. 독자의 흥미를 끌면서도 정확한 정보 전달을 우선시하세요.",
     "report": "보고서 스타일로, 구조화되고 체계적인 서술을 사용하세요. 사실과 데이터를 명확히 전달하세요.",
     "marketing": "마케팅 카피 스타일로, 설득력 있고 매력적인 표현을 사용하세요. 독자의 행동을 유도하는 어조를 강조하세요.",
-    "customer": "고객 상담 스타일로, 정중하고 친절한 어투를 사용하세요. 공감과 해결책 제시를 강조하세요.",
-    "email": "이메일 스타일로, 비즈니스 매너를 지키면서도 간결하고 명확한 표현을 사용하세요.",
+    "customer_service": "고객 상담 스타일로, 정중하고 친절한 어투를 사용하세요. 공감과 해결책 제시를 강조하세요.",
 }
 
 INTENSITY_GUIDES = {
@@ -24,7 +23,7 @@ PARAPHRASE_TEMPLATE = """당신은 전문 교정 전문가입니다. 아래 지�
 **교정 강도**: {intensity}
 - {intensity_guide}
 **언어**: {language_instruction} 작성
-**추가 요청**: {style_request}
+**추가 요청**: {user_prompt}
 **문맥 정보**:
 - 이전 문장: {context_prev}
 - 다음 문장: {context_next}
@@ -45,7 +44,7 @@ def build_paraphrase_prompt(
     category: str,
     intensity: str,
     language: str,
-    style_request: Optional[str] = None,
+    user_prompt: Optional[str] = None,
     context_prev: Optional[str] = None,
     context_next: Optional[str] = None,
 ) -> str:
@@ -54,7 +53,7 @@ def build_paraphrase_prompt(
     intensity_key = intensity or "moderate"
     intensity_guide = INTENSITY_GUIDES.get(intensity_key, INTENSITY_GUIDES["moderate"])
     language_instruction = "한국어로" if language == "ko" else f"{language} 언어로"
-    style_text = (style_request or "추가 요청 없음").strip() or "추가 요청 없음"
+    prompt_text = (user_prompt or "추가 요청 없음").strip() or "추가 요청 없음"
     prev_text = (context_prev or "없음").strip() or "없음"
     next_text = (context_next or "없음").strip() or "없음"
 
@@ -64,7 +63,7 @@ def build_paraphrase_prompt(
         intensity=intensity_key,
         intensity_guide=intensity_guide,
         language_instruction=language_instruction,
-        style_request=style_text,
+        user_prompt=prompt_text,
         context_prev=prev_text,
         context_next=next_text,
         selected_text=selected_text,

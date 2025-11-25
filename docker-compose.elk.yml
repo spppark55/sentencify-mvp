@@ -41,7 +41,6 @@ services:
       - sentencify-net
     depends_on:
       - elasticsearch
-      - kafka # Kafka에서 로그를 가져와야 하므로
     restart: unless-stopped
 
   # Kibana: 대시보드 및 시각화

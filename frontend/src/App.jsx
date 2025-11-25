@@ -39,7 +39,7 @@ export default function App() {
   const [category, setCategory] = useState('none');
   const [language, setLanguage] = useState('ko');
   const [strength, setStrength] = useState(1);
-  const [requestText, setRequestText] = useState('');
+  const [userPrompt, setUserPrompt] = useState('');
   const [optEnabled, setOptEnabled] = useState({
     category: true,
     language: true,
@@ -296,7 +296,7 @@ export default function App() {
       field: optEnabled.category && category !== 'none' ? category : null,
       language: optEnabled.language ? language : null,
       intensity: optEnabled.strength ? intensityLabel : null,
-      user_prompt: requestText || null,
+      user_prompt: userPrompt || null,
     };
 
     try {
@@ -362,7 +362,7 @@ export default function App() {
       category: resolvedCategory,
       language: resolvedLanguage,
       intensity: resolvedMaintenance,
-      style_request: requestText || null,
+      user_prompt: userPrompt || null,
       recommend_session_id: recommendId,
       source_recommend_event_id: recommendInsertId,
     };
@@ -488,7 +488,7 @@ export default function App() {
             text={text}
             selection={selection}
             context={context}
-            options={{ category, language, strength, requestText, optEnabled, recoOptions, contextHash }}
+            options={{ category, language, strength, userPrompt, optEnabled, recoOptions, contextHash }}
             docId={docId}
             recommendId={recommendId}
             scoringInfo={scoringInfo}
@@ -501,7 +501,7 @@ export default function App() {
             category={category} setCategory={setCategory}
             language={language} setLanguage={setLanguage}
             strength={strength} setStrength={setStrength}
-            requestText={requestText} setRequestText={setRequestText}
+            userPrompt={userPrompt} setUserPrompt={setUserPrompt}
             optEnabled={optEnabled} setOptEnabled={setOptEnabled}
             onRun={() => handleRunCorrection(false)}
             candidates={candidates}
