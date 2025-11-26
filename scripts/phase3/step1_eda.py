@@ -1,140 +1,94 @@
 import os
-import json
-from collections import Counter, defaultdict
-import math
-from pathlib import Path
-from typing import Dict, List, Any
-from pymongo import MongoClient
+import sys
 import numpy as np
+from pymongo import MongoClient
+from collections import defaultdict
 
-# 설정
+# Add project root to sys.path to import app modules correctly
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
+
+try:
+    from app.utils.embedding import get_embedding, embedding_service
+except ImportError:
+    print("❌ Failed to import embedding service. Make sure you are running this script from project root or api container.")
+    print("   Try: docker-compose exec api python scripts/phase3/step1_eda.py")
+    sys.exit(1)
+
+# Config
 MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
 DB_NAME = os.getenv("MONGO_DB_NAME", "sentencify")
-COLLECTION_NAME = "raw_corporate_data"
-OUTPUT_FILE = Path("docs/phase3/data_analysis_report.md")
-
-def connect_db():
-    client = MongoClient(MONGO_URI)
-    return client[DB_NAME]
-
-def calculate_entropy(counter: Counter) -> float:
-    """
-    행동의 불확실성(Entropy) 계산.
-    값이 0에 가까울수록 한 가지 행동만 반복(일관성 높음).
-    값이 높을수록 행동이 무작위(Random).
-    """
-    total = sum(counter.values())
-    if total == 0:
-        return 0.0
-    entropy = 0.0
-    for count in counter.values():
-        p = count / total
-        entropy -= p * math.log2(p)
-    return entropy
 
 def run_eda():
-    db = connect_db()
-    collection = db[COLLECTION_NAME]
+    print("Loading Embedding Model...")
+    embedding_service.load_model()
+    print("✅ Model Loaded.")
+
+    print(f"Connecting to MongoDB: {MONGO_URI}")
+    client = MongoClient(MONGO_URI)
+    db = client[DB_NAME]
+    col = db["correction_history"]
+
+    # 1. Fetch & Filter
+    # selected_index != null AND selected_index is numeric
+    query = {"selected_index": {"$ne": None, "$type": "number"}}
+    cursor = col.find(query)
     
-    print(f"[EDA] Analyzing collection '{COLLECTION_NAME}'...")
+    docs = list(cursor)
+    print(f"🔍 Found {len(docs)} accepted correction history records.")
+
+    user_vectors = defaultdict(list)
+
+    # 2. Extract & Embed
+    for doc in docs:
+        try:
+            idx = doc.get("selected_index")
+            outputs = doc.get("output_sentences", [])
+            
+            if idx is not None and 0 <= idx < len(outputs):
+                final_sentence = outputs[idx]
+                
+                # User ID Extraction
+                # correction_history.json structure shows "user": {"$oid": "..."} or "user": "string"
+                # PyMongo converts $oid to ObjectId automatically
+                user_field = doc.get("user")
+                # Handle cases where 'user' is an ObjectId dict or a string ID
+                if isinstance(user_field, dict) and '$oid' in user_field:
+                    user_id = user_field['$oid']
+                elif isinstance(user_field, str):
+                    user_id = user_field
+                elif user_field is None:
+                    user_id = "anonymous"
+                else:
+                    user_id = str(user_field) # Fallback for other ObjectId types
+                
+                # 3. Generate Embedding
+                vector = get_embedding(final_sentence)
+                
+                if vector:
+                    user_vectors[user_id].append(vector)
+                    
+        except Exception as e:
+            print(f"⚠️ Error processing doc {doc.get('_id')}: {e}")
+
+    # 4. Mean Pooling
+    print("\n📊 User Embedding Results (Mean Pooling):")
+    print("-" * 50)
     
-    # 1. 사용자별 통계 집계
-    user_stats = defaultdict(lambda: {
-        "actions": 0,
-        "categories": Counter(),
-        "intensities": Counter(),
-        "languages": Counter(),
-        "prompts": []
-    })
-    
-    # correction_history (User Prompt 포함)
-    for doc in collection.find({"_source_file": "correction_history.json"}):
-        uid = doc.get("user")
-        if not uid: continue
+    for uid, vectors in user_vectors.items():
+        if not vectors:
+            continue
+            
+        # Convert to numpy array for easy mean calculation
+        mat = np.array(vectors)
+        mean_vec = np.mean(mat, axis=0)
         
-        user_stats[uid]["actions"] += 1
-        if f := doc.get("field"): user_stats[uid]["categories"][f] += 1
-        if i := doc.get("intensity"): user_stats[uid]["intensities"][i] += 1
-        if p := doc.get("user_prompt"): 
-             if len(p) < 100: user_stats[uid]["prompts"].append(p)
+        print(f"👤 User: {uid}")
+        print(f"   - Accepted Sentences: {len(vectors)}")
+        print(f"   - Vector Dimension: {mean_vec.shape[0]}")
+        print(f"   - Sample (First 5 dims): {mean_vec[:5]}")
+        print("-" * 50)
 
-    # event_raw (실행 로그)
-    for doc in collection.find({"_source_file": "event_raw.json", "event": "event_editor_run_paraphrasing"}):
-        uid = doc.get("distinct_id")
-        if not uid: continue
-        
-        user_stats[uid]["actions"] += 1
-        if f := doc.get("field"): user_stats[uid]["categories"][f] += 1
-        if i := doc.get("maintenance"): user_stats[uid]["intensities"][i] += 1 # maintenance -> intensity 매핑
-        if l := doc.get("target_language"): user_stats[uid]["languages"][l] += 1
-    
-    total_users = len(user_stats)
-    if total_users == 0:
-        print("[EDA] No users found. Please check if data is imported.")
-        return
-
-    print(f"[EDA] Found {total_users} distinct users.")
-
-    # 2. 메트릭 계산
-    action_counts = [s["actions"] for s in user_stats.values()]
-    avg_actions = np.mean(action_counts)
-    median_actions = np.median(action_counts)
-    heavy_users = len([c for c in action_counts if c >= 10])
-    
-    # 일관성(Consistency) 분석: Category Entropy
-    # Entropy가 0.5 이하인 유저(상당히 일관된 유저)의 비율
-    consistent_users = 0
-    for uid, stats in user_stats.items():
-        if stats["actions"] < 5: continue # 활동 적은 유저 제외
-        e = calculate_entropy(stats["categories"])
-        if e < 0.5: # 거의 한두 가지 카테고리만 씀
-            consistent_users += 1
-    
-    valid_users_count = len([u for u in user_stats.values() if u["actions"] >= 5])
-    consistency_ratio = (consistent_users / valid_users_count * 100) if valid_users_count > 0 else 0
-
-    # Prompt 분석
-    all_prompts = []
-    for s in user_stats.values():
-        all_prompts.extend(s["prompts"])
-    prompt_keywords = Counter(" ".join(all_prompts).split()).most_common(20)
-
-    # 3. 리포트 작성
-    report_content = f"""# 📊 Phase 3 Data Analysis Report
-
-> **Generated by:** `scripts/phase3/step1_eda.py`
-> **Source Collection:** `{COLLECTION_NAME}`
-
-## 1. User Statistics
-*   **Total Users:** {total_users}
-*   **Action Distribution:** Mean {avg_actions:.1f}, Median {median_actions:.1f}
-*   **Heavy Users (>= 10 actions):** {heavy_users} ({heavy_users/total_users*100:.1f}%)
-*   **Valid Analysis Target (>= 5 actions):** {valid_users_count}
-
-## 2. Behavioral Consistency
-*   **Hypothesis:** Do users stick to specific categories?
-*   **Consistent Users (Entropy < 0.5):** {consistent_users}
-*   **Consistency Ratio:** **{consistency_ratio:.1f}%** of valid users show strong category preference.
-    *   *(If > 50%, persona modeling based on category is valid.)*
-    *   *(If < 20%, user behavior is highly random or context-dependent.)*
-
-## 3. User Prompt Insights
-*   **Total Prompts Collected:** {len(all_prompts)}
-*   **Top Keywords:**
-    {json.dumps(dict(prompt_keywords), indent=4, ensure_ascii=False)}
-
-## 4. Persona Feasibility Conclusion
-*(This section is to be filled by the engineer after reviewing the stats above.)*
-"""
-    
-    # 디렉토리 생성 확인
-    OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
-    
-    with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
-        f.write(report_content)
-        
-    print(f"✅ [Done] Report generated at {OUTPUT_FILE}")
-    print(report_content)
+    print("✅ EDA Completed.")
 
 if __name__ == "__main__":
     run_eda()

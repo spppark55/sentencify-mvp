@@ -131,11 +131,74 @@ def sync_vectors():
             {"$set": {"vector_synced": True}}
         )
 
+from app.services.profile_service import ProfileService
+from app.services.sync_service import SyncService
+
+def process_training_ops():
+    """
+    Fast-track ETL:
+    1. Read unprocessed B logs (Run Paraphrasing).
+    2. Update User Profile in Mongo.
+    3. Sync User Profile to Qdrant.
+    4. Mark B logs as processed.
+    """
+    db = get_db()
+    q_client = get_qdrant()
+    
+    # Ensure Qdrant collection for User Behavior exists (BERT 768 dim)
+    behavior_coll = "user_behavior_v1"
+    try:
+        q_client.get_collection(behavior_coll)
+    except Exception:
+        logger.info(f"Creating Qdrant collection: {behavior_coll}")
+        q_client.create_collection(
+            collection_name=behavior_coll,
+            vectors_config=VectorParams(size=EMBED_DIM, distance=Distance.COSINE),
+        )
+
+    profile_service = ProfileService(mongo_client=db.client)
+    sync_service = SyncService(mongo_client=db.client, qdrant_client=q_client)
+    
+    # Fetch pending B logs
+    pending_b = db["editor_run_paraphrasing"].find({"processed_for_training": {"$ne": True}}).limit(50)
+    
+    processed_ids = []
+    users_to_update = set()
+    
+    for doc in pending_b:
+        try:
+            processed_ids.append(doc["_id"])
+            if doc.get("user_id"):
+                users_to_update.add(doc.get("user_id"))
+        except Exception as e:
+            logger.error(f"Error processing B-log {doc.get('_id')}: {e}")
+
+    # Update & Sync Profiles
+    for uid in users_to_update:
+        try:
+            # 1. Update Mongo Profile
+            profile_service.update_user_profile(uid)
+            logger.info(f"Updated profile for user {uid}")
+            
+            # 2. Sync to Qdrant
+            sync_service.sync_user_to_qdrant(uid)
+            
+        except Exception as e:
+            logger.error(f"Failed profile update/sync for {uid}: {e}")
+
+    # Mark B logs as processed
+    if processed_ids:
+        db["editor_run_paraphrasing"].update_many(
+            {"_id": {"$in": processed_ids}},
+            {"$set": {"processed_for_training": True}}
+        )
+
 def start_scheduler():
     scheduler = BlockingScheduler()
     # Run every 5 seconds for testing
     interval = int(os.getenv("ETL_INTERVAL_SECONDS", 5))
     scheduler.add_job(sync_vectors, 'interval', seconds=interval)
+    scheduler.add_job(process_training_ops, 'interval', seconds=interval)
     
     logger.info(f"Starting ETL Worker Scheduler (Interval: {interval}s)...")
     try:

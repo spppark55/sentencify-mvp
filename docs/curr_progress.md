@@ -985,5 +985,25 @@
 ### 3. Data Flow Live Monitor 페이지 수정
 - **컬렉션 이름 일치**: `dashboard/pages/4_Data_Flow_Live.py` 페이지에서 실시간 트래픽을 모니터링할 때 사용하던 MongoDB 컬렉션 이름(`log_a`, `log_b`, `log_c`)을 최신 v2.4 스키마(`COLL_A`, `COLL_B`, `COLL_C` 상수로 참조)에 맞게 수정. 페이지가 현재 시스템의 데이터를 정확히 반영할 수 있도록 개선.
 
-### 4. Docker 재빌드 및 재시작 필요
+### 4. VectorDB 업서트 품질 게이트 (`etl_worker.py`)
+- **수락된 Context만 업서트**: `etl_worker.py`의 `sync_vectors` 로직을 수정하여, `context_block` (E)가 Qdrant에 업서트될 때 반드시 `editor_selected_paraphrasing` (C) 로그에서 `was_accepted: True`인 경우가 확인될 때만 처리하도록 Quality Gate를 구현.
+- **건너뛰기 로직**: C 로그가 없거나 `was_accepted: False`인 경우, 해당 E 로그는 Qdrant에 업서트하지 않고 즉시 `vector_synced: True`로 마킹하여 재처리를 방지하고 건너뛰도록 로직을 단순화.
+- **ETL 주기 변경**: 테스트 용이성을 위해 `ETL_INTERVAL_SECONDS`를 5초로 일시 변경.
+
+### 5. 대시보드 토폴로지 수정 (`dashboard/components/topology_graph.py`)
+- **정확한 ETL 흐름 반영**: `API -> Emb Model -> VectorDB` 엣지를 제거하고, `Mongo -> Worker -> Emb Model -> VectorDB` 흐름을 반영하도록 시스템 맵의 엣지를 수정.
+
+### 6. User Embedding EDA 스크립트 추가 (`scripts/phase3/step1_eda.py`)
+- **`correction_history` 기반 유저 임베딩 추출**: `scripts/phase3/step1_eda.py` 스크립트를 작성하여 `correction_history` 컬렉션에서 `selected_index`가 있는 최종 문장만 추출, 임베딩 모델(`klue/bert-base`)을 통과시켜 유저별 평균 임베딩 벡터를 계산하고 결과를 출력. User ID 추출 로직(`$oid` 처리 포함) 및 임베딩 서비스 임포트 경로 오류 수정 후 실행 성공 확인.
+
+### 8. Recommendation Cycle 완성 (Sync & Serving)
+
+- **User Profile Schema 개선**: `UserProfile` 스키마를 수정하여 `preferred_category_vector` 등을 유연한 Map(`Dict`) 형태로 변경하고, 수락률 지표를 세분화함.
+- **Profile Service 리팩토링**: `ProfileService`가 중간 데이터(H)에 의존하지 않고 A/B/C/D 원본 로그를 직접 집계하여 통계와 임베딩을 계산하도록 로직을 완성함.
+- **Sync Service 구현**: MongoDB에 저장된 최신 User Profile을 Qdrant(`user_behavior_v1`)로 동기화하는 `SyncService`를 구현함. (BERT 768차원 벡터 사용)
+- **ETL Worker 자동화**: `etl_worker.py`의 `process_training_ops`에 `SyncService`를 통합하여, 프로필 갱신 직후 Qdrant 동기화가 자동으로 이루어지도록 연결함.
+- **추천 API 연동**: `recommendation_service.py` (유사 유저 기반 강도 추천 로직)를 구현하고, `main.py`의 `/recommend` 엔드포인트에 연결하여 실제 추천에 반영되도록 함.
+- **단위 테스트 추가**: `tests/test_recommendation.py`, `tests/test_sync_service.py` 작성 완료.
+
+### 9. Docker 재빌드 및 재시작 필요
 - 위 변경 사항들은 `api` 서비스와 `dashboard` 서비스의 코드 변경을 포함하므로, 변경 사항을 적용하기 위해서는 해당 Docker 컨테이너를 재빌드하고 재시작해야 합니다. (예: `docker-compose up --build -d` 또는 `docker-compose restart api dashboard`)

@@ -23,6 +23,8 @@ from app.services.classifier_service import ClassifierService
 from app.services.logger import MongoLogger
 from app.utils.embedding import get_embedding, embedding_service
 from app.utils.scoring import calculate_alpha, calculate_maturity_score
+from app.services.recommendation_service import recommend_intensity_by_similarity
+from app.qdrant.client import get_qdrant_client
 
 load_dotenv()
 
@@ -208,6 +210,23 @@ async def recommend(req: RecommendRequest, background_tasks: BackgroundTasks) ->
         traceback.print_exc()
         macro_context = None
 
+    # Intensity Recommendation (Personalization)
+    recommended_intensity = "moderate"
+    try:
+        if req.user_id:
+            user_collection = get_mongo_collection("users")
+            user_doc = user_collection.find_one({"user_id": req.user_id})
+            
+            if user_doc and user_doc.get("user_embedding_v1"):
+                # Use similarity search
+                recommended_intensity = recommend_intensity_by_similarity(
+                    user_embedding=user_doc["user_embedding_v1"],
+                    qdrant_client=get_qdrant_client(),
+                    mongo_user_collection=user_collection
+                )
+    except Exception as e:
+        print(f"[Recommend] Intensity recommendation failed: {e}")
+
     # P_rule Calculation
     p_rule: Dict[str, float] = {}
     if _classifier_service:
@@ -253,7 +272,9 @@ async def recommend(req: RecommendRequest, background_tasks: BackgroundTasks) ->
 
     best_category = max(final_scores, key=final_scores.get)
     language = req.language or "ko"
-    intensity = req.intensity or "moderate"
+    
+    # Use requested intensity OR the recommended one
+    intensity = req.intensity or recommended_intensity
 
     reco_options = [
         RecommendOption(
@@ -281,6 +302,7 @@ async def recommend(req: RecommendRequest, background_tasks: BackgroundTasks) ->
         "context_hash": context_hash,
         "context_full_preview": context_full[:500],
         "reco_options": [o.model_dump() for o in reco_options],
+        "recommended_intensity": recommended_intensity, # Log recommendation
         "P_rule": p_rule,
         "P_vec": p_vec,
         "P_doc": p_doc,

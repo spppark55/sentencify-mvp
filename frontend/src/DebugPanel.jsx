@@ -6,6 +6,7 @@ export default function DebugPanel({
   docId,
   recommendId,
   scoringInfo = {},
+  recommendDebug = {}, // New prop for recommendation debug info
 }) {
   const events = window.__eventLog || [];
   const maturity = Math.min(
@@ -40,6 +41,8 @@ export default function DebugPanel({
                   docId,
                   recommendId,
                   events,
+                  scoringInfo,
+                  recommendDebug
                 };
                 console.log('[DUMP]', dump);
                 alert('콘솔에 DUMP 출력됨');
@@ -80,6 +83,39 @@ export default function DebugPanel({
             {JSON.stringify(options, null, 2)}
           </pre>
         </div>
+
+        {/* Recommendation Logic Debug */}
+        {recommendDebug && Object.keys(recommendDebug).length > 0 && (
+          <div className="border rounded p-2 col-span-2 max-w-full bg-white border-blue-200">
+            <div className="font-semibold text-blue-700 mb-2">
+              🧠 Intensity Recommendation (Personalization)
+            </div>
+            <div className="grid grid-cols-2 gap-2 mb-2">
+              <div>
+                <span className="text-gray-500">Status:</span>{' '}
+                <strong>{recommendDebug.status}</strong>
+              </div>
+              <div>
+                <span className="text-gray-500">Winner:</span>{' '}
+                <span className="text-blue-600 font-bold">{recommendDebug.winner || '-'}</span>
+              </div>
+              <div>
+                <span className="text-gray-500">Similar Users:</span>{' '}
+                {recommendDebug.similar_users_count}
+              </div>
+              <div>
+                <span className="text-gray-500">Top Score:</span>{' '}
+                {Number(recommendDebug.top_similarity_score || 0).toFixed(4)}
+              </div>
+            </div>
+            <div className="border-t pt-2">
+              <div className="text-gray-500 mb-1">Voting Scores:</div>
+              <pre className="whitespace-pre-wrap break-words text-[10px] bg-gray-50 p-1 rounded">
+                {JSON.stringify(recommendDebug.voting_scores || {}, null, 2)}
+              </pre>
+            </div>
+          </div>
+        )}
 
         <div className="border rounded p-2 col-span-2 max-w-full bg-white">
           <div className="font-semibold text-gray-700 mb-2">

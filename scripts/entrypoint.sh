@@ -5,6 +5,9 @@ set -e
 if [ "$RUN_INIT" = "true" ]; then
     echo "🚀 Running Qdrant Initialization..."
     python /app/scripts/init_qdrant.py || echo "⚠️ Init script failed or skipped"
+    
+    echo "🚀 Running User Profile Vector Upload..."
+    python /app/scripts/phase3/step3_upload_to_qdrant.py || echo "⚠️ User Profile Upload failed or skipped"
 else
     echo "⏩ Skipping Qdrant Initialization (Set RUN_INIT=true to run)"
 fi

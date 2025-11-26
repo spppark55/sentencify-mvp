@@ -11,6 +11,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY api/app ./app
 COPY scripts ./scripts
 COPY api/train_data.csv ./train_data.csv
+COPY data/import/user_profile.json /app/data/import/user_profile.json
 
 # Copy entrypoint to a location not overridden by volume mount and fix line endings
 COPY scripts/entrypoint.sh /entrypoint.sh
