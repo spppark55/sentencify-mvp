@@ -16,7 +16,7 @@
   - `context_full` 조립 및 `context_hash = sha256(doc_id + ":" + context_full)` 구현.
   - Stub 점수:
     - `P_rule = {"thesis": 0.5, "email": 0.3, "article": 0.2}`
-    - `P_vec  = {"thesis": 0.7, "email": 0.2, "article": 0.1}`
+    - `P_vec  = {"thesis": 0.7, "email": 0.2, "article": 0.1}
     - `P_final = 0.5 * P_rule + 0.5 * P_vec` 로 최종 카테고리 선택.
   - 추천 옵션 생성:
     - `reco_options = [{ category: best_category, language: req.language or "ko", intensity: req.intensity or "moderate" }]`
@@ -407,7 +407,7 @@
   - bcrypt로 비밀번호 검증:
     - 실패 시 동일하게 HTTP 400 (`"Invalid credentials"`).
   - JWT Access Token 생성:
-    - payload: `{"sub": email, "user_id": str(user["_id"])}`.
+    - payload: `{"sub": email, "user_id": str(user["_id"])`}. 
     - 만료: 기본 24시간(환경변수로 조정 가능).
   - 응답:
     - `{"access_token": "<JWT>", "token_type": "bearer"}`.
@@ -897,44 +897,93 @@
 ## 2025-11-24 – Dashboard Visualization Upgrade & ELK Integration Start
 
 ### 1. Dashboard Upgrade (Live Stream & Topology)
-- **Live Activity Stream (`dashboard/app.py`):**
+- **Live Activity Stream (`dashboard/app.py`)**:
   - 메인 페이지를 "실시간 활동 스트림"으로 개편.
   - A(추천)/B(실행)/C(선택) 로그를 통합하여 시간순으로 표시하는 `get_recent_activity_stream` 쿼리 구현 및 적용.
-- **Topology Map Refactoring (`dashboard/components/topology_graph.py`):**
+- **Topology Map Refactoring (`dashboard/components/topology_graph.py`)**:
   - `streamlit-agraph` 설정을 `hierarchical=True`, `direction='LR'`(Left-to-Right)로 변경하여 깔끔한 파이프라인 구조 시각화.
   - 노드 아이콘 적용 및 `_heat_color` 로직을 통해 데이터 흐름에 따른 실시간 색상 변화(Heatmap) 구현.
   - `scripts/simulate_traffic.py`의 Burst 트래픽으로 시각화 효과 검증 완료.
 
 ### 2. ELK Stack Integration (Phase 2.5 착수)
-- **Roadmap & Architecture:**
+- **Roadmap & Architecture**:
   - `docs/phase2.5/elk_로드맵.md` 작성: Streamlit 폐기 및 ELK 전면 전환 전략 수립.
   - `docs/아키텍쳐2-4.md` 업데이트: Kafka Consumer Group을 활용한 **병렬 로그 구독(Parallel Subscription)** 아키텍처 명시 (MongoDB: 보존/ETL, ELK: 관제/BI).
-- **Infrastructure Setup:**
+- **Infrastructure Setup**:
   - `docker-compose.elk.yml` 생성: Elasticsearch, Logstash, Kibana 컨테이너 정의 (메모리 최적화 포함).
   - `elk/logstash/config/logstash.yml`, `elk/kibana/config/kibana.yml` 기본 설정 파일 생성.
-  - **Logstash Pipeline (`elk/logstash/pipeline/logstash.conf`):**
+  - **Logstash Pipeline (`elk/logstash/pipeline/logstash.conf`)**:
     - Kafka Input 플러그인 설정: `editor_recommend_options`, `editor_run_paraphrasing` 등 주요 토픽 구독.
     - `filter` 단계에서 `json { source => "message" }`로 파싱 처리 (CRLF 및 JSON 에러 해결).
     - Elasticsearch Output 설정: `sentencify-logs-*` 인덱스로 실시간 적재 파이프라인 구축.
-- **Verification:**
-  - **Unit Test (`scripts/test_elk_connection.py`):**
+- **Verification**:
+  - **Unit Test (`scripts/test_elk_connection.py`)**:
     - Elasticsearch 연결 및 Logstash 파이프라인(Kafka -> ES) 정상 작동 확인 ✅
-  - **Integration Test (`scripts/phase2.5_test_elk_pipeline.py`):**
+  - **Integration Test (`scripts/phase2.5_test_elk_pipeline.py`)**:
     - API 호출부터 Elasticsearch 적재까지의 E2E 파이프라인 정상 작동 확인 ✅
 
 ### 3. Golden Data Mocking (For ELK Pipeline 2)
 - **Objective:** ELK의 Golden Data 시각화 파이프라인을 테스트하기 위해, ETL을 거치지 않고 MongoDB에 강제로 학습 데이터(`training_examples`)를 주입.
-- **Action:**
+- **Action**:
   - `scripts/inject_mock_golden_data.py` 작성 및 실행.
   - MongoDB에 `training_examples` 컬렉션 생성 및 Mock 데이터 5건 적재 완료.
   - 이를 통해 후속 작업인 "MongoDB -> ES 동기화 스크립트" 개발 준비 완료.
 
 ### 4. Golden Data Sync Pipeline (MongoDB -> Elasticsearch)
-- **Script (`scripts/sync_golden_to_es.py`):**
+- **Script (`scripts/sync_golden_to_es.py`)**:
   - **Incremental Sync:** Elasticsearch에서 가장 최근 `created_at` 체크포인트를 조회하여, 그 이후 생성된 MongoDB 데이터만 가져오는 효율적인 로직 구현.
   - **Bulk Upsert:** `helpers.bulk`를 사용하여 대량 데이터를 ES 인덱스(`sentencify-golden-YYYY.MM`)에 고속 적재.
   - **Verification:** Mock Data 5건이 성공적으로 ES로 동기화됨을 확인 (`[Synced 5 documents]`).
-- **Dependency Update:**
+- **Dependency Update**:
   - `api/requirements.txt`에 `elasticsearch<9.0.0` 및 `python-dateutil` 추가 (ES 8.x 서버 호환성 확보).
 
 ---
+
+## 2025-11-25 – Strategic Pivot: ELK Removed & Dashboard Control Tower
+
+### 1. Strategic Change
+- **Deprioritized ELK Stack**: Suspended Phase 2.5 ELK integration to reduce infrastructure complexity.
+- **Dashboard as Control Tower**: Confirmed `Streamlit Dashboard` as the primary monitoring tool (polling MongoDB directly).
+- **Single Path Architecture**:
+  - Removed "Dual Subscription".
+  - Validated "Kafka -> Consumer -> MongoDB" as the Single Source of Truth (SSOT).
+
+### 2. Documentation Update
+- **Architecture v2.4**:
+  - Updated `docs/아키텍쳐2-4.md` to reflect the removal of ELK and the elevation of Streamlit Dashboard.
+  - Clarified the data flow: API -> Kafka -> Mongo -> Dashboard/ETL.
+
+---
+
+## 2025-11-26 – Dashboard Enhancements: Detailed Inspector & Logs
+
+### 1. Dashboard Query 확장 (`dashboard/queries/mongo.py`)
+- **Generic Log Fetcher**: `get_recent_docs(collection_name, limit)` 함수를 추가하여, 특정 MongoDB 컬렉션의 최신 로그를 표준화된 방식으로 조회 가능하게 함.
+- **VectorDB Metrics**: `get_recent_upserts` 함수를 추가하여, VectorDB에 업서트된 최신 Context Block(COLL_E)을 조회하는 로직 구현.
+
+### 2. Inspector 컴포넌트 고도화 (`dashboard/components/inspector.py`)
+- **Node-specific Inspectors**: 기존에 미구현된 노드(`Emb Model`, `VectorDB`, `GenAI (Run/Macro)`)에 대한 전용 Inspector 뷰를 구현.
+- **Unified Log View**: 모든 노드 Inspector 하단에 `_render_recent_logs` 공통 헬퍼를 사용하여 관련 최근 로그/이벤트를 표시하도록 개선.
+  - **VectorDB**: 총 Context Block 수 및 최근 Upsert 로그.
+  - **Redis**: Micro(LLM Response) vs Macro(Context) 캐시 분포 차트 및 각 타입별 최신 키 샘플(Logs).
+  - **API**: 최근 시스템 로그 및 Anomaly(>2000ms Latency) 로그.
+  - **Worker/GenAI**: 관련 작업 큐 및 실행 로그(COLL_B, COLL_F) 표시.
+- **Effect**: 사용자가 System Map의 노드를 클릭하면, 해당 컴포넌트의 핵심 메트릭(캐시 적중률, 업서트 수 등)과 실제 최근 동작 로그를 즉시 확인할 수 있어 "Control Tower"로서의 가시성이 대폭 향상됨.
+
+---
+
+## 2025-11-26 – System Enhancements & Dashboard Fixes
+
+### 1. ETL Worker 주기 변경 및 Qdrant 데이터 형식 정제
+- **ETL Worker 주기 조정**: `api/app/etl_worker.py`의 `sync_vectors` 실행 주기를 `ETL_INTERVAL_SECONDS` 환경변수를 통해 설정 가능하도록 변경 (기본값 24시간).
+- **Qdrant 데이터 형식 일치**: `/recommend` API (`api/app/main.py`)에서 `context_block` 이벤트 (`e_event`)를 생성할 때 `field` 값을 포함하도록 수정. `etl_worker.py`도 Qdrant에 업서트하는 Payload에 `content` (full text)와 `field`를 포함하도록 변경하여 Qdrant의 `PointStruct` 형식과 일관성을 유지.
+
+### 2. Macro Cache 대시보드 조회 문제 해결
+- **Macro Service 동기화**: `api/app/services/macro_service.py`가 LLM을 통한 Macro 분석 완료 후, Redis 캐시뿐만 아니라 MongoDB의 `document_context_cache` (COLL_F) 컬렉션에도 결과를 동기화하도록 수정. 이로써 대시보드가 MongoDB에서 Macro 업데이트 내역을 조회할 수 있게 됨.
+- **Redis Inspector 패턴 수정**: 대시보드의 `dashboard/queries/redis.py` 및 `dashboard/components/inspector.py`에서 Macro Redis 캐시를 조회하는 패턴을 실제 API가 사용하는 `macro_context:*` 패턴으로 일치시킴. Micro/Macro 캐시 조회를 다시 탭으로 분리하고, 각 탭 내에서 최신순(Idle Time)으로 정렬하여 표시하도록 개선.
+
+### 3. Data Flow Live Monitor 페이지 수정
+- **컬렉션 이름 일치**: `dashboard/pages/4_Data_Flow_Live.py` 페이지에서 실시간 트래픽을 모니터링할 때 사용하던 MongoDB 컬렉션 이름(`log_a`, `log_b`, `log_c`)을 최신 v2.4 스키마(`COLL_A`, `COLL_B`, `COLL_C` 상수로 참조)에 맞게 수정. 페이지가 현재 시스템의 데이터를 정확히 반영할 수 있도록 개선.
+
+### 4. Docker 재빌드 및 재시작 필요
+- 위 변경 사항들은 `api` 서비스와 `dashboard` 서비스의 코드 변경을 포함하므로, 변경 사항을 적용하기 위해서는 해당 Docker 컨테이너를 재빌드하고 재시작해야 합니다. (예: `docker-compose up --build -d` 또는 `docker-compose restart api dashboard`)

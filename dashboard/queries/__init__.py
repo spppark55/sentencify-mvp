@@ -18,4 +18,12 @@ from .mongo import (
     get_sankey_links,
     get_system_health,
     get_total_counts,
+    get_macro_impact_stats,
+    get_hybrid_score_ratio,
+    get_k_doc_count,
+    get_recent_error_logs,
+    get_conversion_funnel,
+    get_rule_vs_vector_stats,
+    get_latency_breakdown,
+    get_user_intent_stats
 )

@@ -8,6 +8,7 @@ from typing import Optional
 
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
+from pymongo import MongoClient
 
 from app.redis.client import set_macro_context
 from app.schemas.macro import DocumentContextCache
@@ -17,6 +18,16 @@ _OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 _client: Optional[AsyncOpenAI] = None
 if _OPENAI_API_KEY:
     _client = AsyncOpenAI(api_key=_OPENAI_API_KEY)
+
+_MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
+_MONGO_DB_NAME = os.getenv("MONGO_DB_NAME", "sentencify")
+_mongo_client: Optional[MongoClient] = None
+
+def _get_mongo_coll():
+    global _mongo_client
+    if _mongo_client is None:
+        _mongo_client = MongoClient(_MONGO_URI)
+    return _mongo_client[_MONGO_DB_NAME]["document_context_cache"]
 
 _MODEL_NAME = "gpt-4.1-nano"
 
@@ -79,4 +90,15 @@ async def analyze_and_cache_macro_context(
         valid_until=now + timedelta(hours=1),
     )
     await set_macro_context(doc_id, cache_object)
+    
+    # Sync to MongoDB for Dashboard/Persistence
+    try:
+        _get_mongo_coll().update_one(
+            {"doc_id": doc_id},
+            {"$set": cache_object.model_dump()},
+            upsert=True
+        )
+    except Exception as e:
+        print(f"[Macro] Failed to sync to Mongo: {e}")
+
     return cache_object

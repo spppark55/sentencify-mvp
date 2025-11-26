@@ -9,7 +9,6 @@ from datetime import datetime, timezone
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
-from kafka import KafkaProducer
 from pydantic import BaseModel
 from pymongo import MongoClient
 from dotenv import load_dotenv
@@ -21,12 +20,11 @@ from app.qdrant.service import compute_p_vec
 from app.redis.client import get_macro_context, get_llm_cache, set_llm_cache
 from app.services.macro_service import analyze_and_cache_macro_context
 from app.services.classifier_service import ClassifierService
+from app.services.logger import MongoLogger
 from app.utils.embedding import get_embedding, embedding_service
 from app.utils.scoring import calculate_alpha, calculate_maturity_score
 
 load_dotenv()
-
-# ... (RecommendRequest definition omitted)
 
 class RecommendRequest(BaseModel):
     doc_id: str
@@ -75,13 +73,12 @@ class ParaphraseRequest(BaseModel):
     user_prompt: Optional[str] = None
     recommend_session_id: Optional[str] = None
     source_recommend_event_id: Optional[str] = None
+    selected_reco_option_index: Optional[int] = None
+    is_custom_option: Optional[bool] = None
 
 
 class ParaphraseResponse(BaseModel):
     candidates: List[str]
-
-
-
 
 
 class LogRequest(BaseModel):
@@ -111,20 +108,20 @@ app.add_middleware(
 )
 
 LOG_DIR = Path("logs")
-KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
-KAFKA_ENABLED = os.getenv("KAFKA_ENABLED", "true").lower() != "false"
-
-
-
-
 MONGO_URI = os.getenv("MONGO_URI", "mongodb://mongo:27017")
 MONGO_DB_NAME = os.getenv("MONGO_DB_NAME", "sentencify")
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+_openai_client: AsyncOpenAI | None = AsyncOpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
+if OPENAI_API_KEY:
+    print("[OpenAI] API key loaded from environment.")
+else:
+    print("[OpenAI] API key not found; paraphrase endpoint will use fallbacks.")
 
-_kafka_producer: KafkaProducer | None = None
 _mongo_client: MongoClient | None = None
+_classifier_service: ClassifierService | None = None
 
 @app.on_event("startup")
-async def startup_event():
+def startup_event():
     '''임베딩 모델 및 분류기 로딩'''
     global _classifier_service
     print("Loading embedding model (klue/bert-base)")
@@ -135,38 +132,6 @@ async def startup_event():
     print("Loading KoBERT Classifier...")
     _classifier_service = ClassifierService()
     print("KoBERT Classifier ready!")
-
-LOG_DIR = Path("logs")
-KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
-KAFKA_ENABLED = os.getenv("KAFKA_ENABLED", "true").lower() != "false"
-MONGO_URI = os.getenv("MONGO_URI", "mongodb://mongo:27017")
-MONGO_DB_NAME = os.getenv("MONGO_DB_NAME", "sentencify")
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
-_openai_client: AsyncOpenAI | None = AsyncOpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
-if OPENAI_API_KEY:
-    print("[OpenAI] API key loaded from environment.")
-else:
-    print("[OpenAI] API key not found; paraphrase endpoint will use fallbacks.")
-
-_kafka_producer: KafkaProducer | None = None
-_mongo_client: MongoClient | None = None
-_classifier_service: ClassifierService | None = None
-
-
-def get_kafka_producer() -> KafkaProducer | None:
-    global _kafka_producer
-    if not KAFKA_ENABLED:
-        return None
-    if _kafka_producer is not None:
-        return _kafka_producer
-    try:
-        _kafka_producer = KafkaProducer(
-            bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
-            value_serializer=lambda v: json.dumps(v, ensure_ascii=False).encode("utf-8"),
-        )
-    except Exception:
-        _kafka_producer = None
-    return _kafka_producer
 
 
 def get_mongo_collection(name: str):
@@ -182,12 +147,6 @@ def _now_iso() -> str:
 
 
 def build_context_full(prev: Optional[str], selected: str, next_: Optional[str]) -> str:
-    """
-    Emphasize selected_text first, then lightly attach surrounding context.
-
-    Format:
-      "<selected>\\n[Context] <prev> <next>"
-    """
     selected = selected or ""
     context_parts = []
     if prev:
@@ -201,16 +160,13 @@ def build_context_full(prev: Optional[str], selected: str, next_: Optional[str])
 
     return selected
 
-
 def build_context_hash(doc_id: str, context_full: str) -> str:
     payload = f"{doc_id}:{context_full}"
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
-
 def _fallback_candidates(selected_text: str) -> List[str]:
     text = selected_text or ""
     return [text, text, text]
-
 
 def _clean_candidates(raw_text: str, fallback: str) -> List[str]:
     cleaned: List[str] = []
@@ -225,18 +181,10 @@ def _clean_candidates(raw_text: str, fallback: str) -> List[str]:
         cleaned.append(fallback)
     return cleaned[:3]
 
-
 def _normalize_for_cache(text: str) -> str:
-    """
-    Normalize text to increase cache hit rate.
-    - Trim whitespace
-    - Remove trailing punctuation (.,!?;:)
-    Example: "Hello world. " -> "Hello world"
-    """
     if not text:
         return ""
     return text.strip().rstrip(".,!?;:")
-
 
 def append_jsonl(filename: str, payload: Dict) -> None:
     LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -245,154 +193,31 @@ def append_jsonl(filename: str, payload: Dict) -> None:
         f.write(json.dumps(payload, ensure_ascii=False) + "\n")
 
 
-def produce_a_event(payload: Dict) -> None:
-    append_jsonl("a.jsonl", payload)
-    producer = get_kafka_producer()
-    if producer is not None:
-        try:
-            producer.send("editor_recommend_options", value=payload)
-        except Exception:
-            # Kafka 오류가 나도 E2E 흐름은 유지
-            pass
-
-
-def produce_i_event(payload: Dict) -> None:
-    append_jsonl("i.jsonl", payload)
-    producer = get_kafka_producer()
-    if producer is not None:
-        try:
-            producer.send("recommend_log", value=payload)
-        except Exception:
-            pass
-
-
-def produce_e_event(payload: Dict) -> None:
-    append_jsonl("e.jsonl", payload)
-    producer = get_kafka_producer()
-    if producer is not None:
-        try:
-            producer.send("context_block", value=payload)
-        except Exception:
-            pass
-
-
-def produce_b_event(payload: Dict) -> None:
-    """B 이벤트: editor_run_paraphrasing 발행"""
-    append_jsonl("b.jsonl", payload)
-    producer = get_kafka_producer()
-    if producer is not None:
-        try:
-            producer.send("editor_run_paraphrasing", value=payload)
-        except Exception:
-            pass
-
-
-
-# 문장교정 프롬프트 (레거시 호환성을 위해 유지)
-# @app.post("/correct", response_model=List[str])
-# async def correct(req: CorrectRequest) -> List[str]:
-#     """
-#     레거시 엔드포인트 - 간단한 교정용
-#     프로젝트 아키텍처상으로는 /paraphrase 사용 권장
-#     """
-#     if not GEMINI_API_KEY:
-#         raise HTTPException(
-#             status_code=500,
-#             detail="GEMINI_API_KEY is not configured on the server.",
-#         )
-
-#     model = genai.GenerativeModel('gemini-2.5-flash')
-
-#     # 새로운 프롬프트 함수 사용
-#     prompt = build_paraphrase_prompt(
-#         selected_text=req.selected_text,
-#         category=req.field or "email",
-#         intensity=req.intensity or "moderate",
-#         language=req.language or "ko",
-#     )
-
-#     try:
-#         response = await model.generate_content_async(prompt)
-#         candidates = response.text.strip().split('\n')
-#         # 빈 문자열 제거
-#         return [c.strip() for c in candidates if c.strip()]
-#     except Exception as e:
-#         print(f"Error calling Gemini API: {e}")
-#         raise HTTPException(status_code=500, detail="Failed to call Gemini API.")
-
-
-def produce_c_event(payload: Dict) -> None:
-    append_jsonl("c.jsonl", payload)
-    producer = get_kafka_producer()
-    if producer is not None:
-        try:
-            producer.send("editor_selected_paraphrasing", value=payload)
-        except Exception:
-            # C 이벤트도 Kafka 오류는 무시
-            pass
-
-
-def produce_k_event(payload: Dict) -> None:
-    append_jsonl("k.jsonl", payload)
-    producer = get_kafka_producer()
-    if producer is not None:
-        try:
-            producer.send("editor_document_snapshot", value=payload)
-        except Exception:
-            # K 이벤트도 Kafka 오류는 무시
-            pass
-
-
 @app.post("/recommend", response_model=RecommendResponse)
-async def recommend(req: RecommendRequest) -> RecommendResponse:
+async def recommend(req: RecommendRequest, background_tasks: BackgroundTasks) -> RecommendResponse:
     insert_id = str(uuid.uuid4())
     recommend_session_id = str(uuid.uuid4())
 
     context_full = build_context_full(req.context_prev, req.selected_text, req.context_next)
     context_hash = build_context_hash(req.doc_id, context_full)
-    print(
-        "[TRACE][recommend] incoming request",
-        {
-            "doc_id": req.doc_id,
-            "user_id": req.user_id,
-            "selected_len": len(req.selected_text or ""),
-            "context_prev_len": len(req.context_prev or ""),
-            "context_next_len": len(req.context_next or ""),
-            "field": req.field,
-            "language": req.language,
-        },
-        flush=True,
-    )
+    
     try:
         macro_context = await get_macro_context(req.doc_id)
     except Exception as exc:
         print(f"[Redis] Failed to load macro context: {exc}", flush=True)
         traceback.print_exc()
         macro_context = None
-    print(f"[TRACE][recommend] macro_context={macro_context}", flush=True)
 
     # P_rule Calculation
     p_rule: Dict[str, float] = {}
     if _classifier_service:
         p_rule = _classifier_service.predict_p_rule(context_full)
     else:
-        # Fallback stub if service not loaded
         p_rule = {"thesis": 0.5, "report": 0.3, "article": 0.2}
     
-    print(f"[TRACE][recommend] P_rule={p_rule}", flush=True)
-
-    print(f"\n[DEBUG] 1. Input Context (Full):\n{context_full!r}", flush=True)
-
     try:
         embedding = get_embedding(context_full)
-        print(
-            f"[DEBUG] 2. Embedding Generated: len={len(embedding)}, "
-            f"sample={embedding[:5]}...",
-            flush=True,
-        )
         p_vec = compute_p_vec(embedding, limit=15)
-        print(f"[DEBUG] 4. Final P_vec Result: {p_vec}\n", flush=True)
-        print(f"[TRACE][recommend] P_vec_keys={list(p_vec.keys())}", flush=True)
     except Exception as e:
         print(f"[ERROR] P_vec calculation failed: {e}", flush=True)
         traceback.print_exc()
@@ -410,17 +235,10 @@ async def recommend(req: RecommendRequest) -> RecommendResponse:
     doc_maturity = calculate_maturity_score(doc_length)
     alpha = calculate_alpha(doc_maturity)
     
-    print(f"\n[SCORING DEBUG]")
-    print(f"Doc Length: {doc_length}, Maturity: {doc_maturity:.4f}, Alpha (Macro Weight): {alpha:.4f}")
-    print(f"P_vec:  {json.dumps(p_vec, ensure_ascii=False)}")
-    print(f"P_rule: {json.dumps(p_rule, ensure_ascii=False)}")
-    print(f"P_doc:  {json.dumps(p_doc, ensure_ascii=False)}")
-
     score_categories = set(p_vec) | set(p_doc)
     if not score_categories:
         score_categories = set(p_rule)
 
-    # Revised Formula: alpha * P_doc + (1-alpha) * (w_vec * P_vec + w_rule * P_rule)
     W_VEC = 0.6
     W_RULE = 0.4
     
@@ -432,8 +250,6 @@ async def recommend(req: RecommendRequest) -> RecommendResponse:
         
         micro_score = (W_VEC * score_vec) + (W_RULE * score_rule)
         final_scores[k] = (alpha * score_doc) + ((1 - alpha) * micro_score)
-
-    print(f"Final Scores: {json.dumps(final_scores, ensure_ascii=False)}\n")
 
     best_category = max(final_scores, key=final_scores.get)
     language = req.language or "ko"
@@ -447,11 +263,6 @@ async def recommend(req: RecommendRequest) -> RecommendResponse:
             user_prompt=None,
         )
     ]
-    print(
-        "[TRACE][recommend] final reco_options",
-        [opt.model_dump() for opt in reco_options],
-        flush=True,
-    )
 
     model_version = "phase1_stub_v1"
     api_version = "v1"
@@ -481,7 +292,8 @@ async def recommend(req: RecommendRequest) -> RecommendResponse:
         "embedding_version": embedding_version,
         "created_at": _now_iso(),
     }
-    produce_a_event(a_event)
+    append_jsonl("a.jsonl", a_event)
+    background_tasks.add_task(MongoLogger.log_event, "editor_recommend_options", a_event)
 
     i_event = {
         "event": "recommend_log",
@@ -501,7 +313,8 @@ async def recommend(req: RecommendRequest) -> RecommendResponse:
         "schema_version": schema_version,
         "created_at": _now_iso(),
     }
-    produce_i_event(i_event)
+    append_jsonl("i.jsonl", i_event)
+    background_tasks.add_task(MongoLogger.log_event, "recommend_log", i_event)
 
     e_event = {
         "event": "context_block",
@@ -510,10 +323,13 @@ async def recommend(req: RecommendRequest) -> RecommendResponse:
         "user_id": req.user_id,
         "context_hash": context_hash,
         "context_full": context_full,
+        "field": req.field or "general",
         "embedding_version": embedding_version,
+        "vector_synced": False, # Flag for ETL Worker
         "created_at": _now_iso(),
     }
-    produce_e_event(e_event)
+    append_jsonl("e.jsonl", e_event)
+    background_tasks.add_task(MongoLogger.log_event, "context_block", e_event)
 
     return RecommendResponse(
         insert_id=insert_id,
@@ -533,7 +349,7 @@ async def recommend(req: RecommendRequest) -> RecommendResponse:
 
 
 @app.post("/paraphrase", response_model=ParaphraseResponse)
-async def paraphrase(req: ParaphraseRequest) -> ParaphraseResponse:
+async def paraphrase(req: ParaphraseRequest, background_tasks: BackgroundTasks) -> ParaphraseResponse:
     fallback_text = req.selected_text or ""
     fallback_candidates = _fallback_candidates(fallback_text)
     category = req.category or "general"
@@ -541,17 +357,12 @@ async def paraphrase(req: ParaphraseRequest) -> ParaphraseResponse:
     intensity = req.intensity or "moderate"
     event_id = str(uuid.uuid4())
 
-    # Cache Key Generation (Normalized)
-    # Normalize text: "Hello." and "Hello" will share the same cache key
     normalized_text = _normalize_for_cache(req.selected_text)
     raw_key = f"{normalized_text}|{category}|{intensity}|{language}|{req.user_prompt or ''}"
     cache_key = f"llm:para:{hashlib.sha256(raw_key.encode()).hexdigest()}"
 
-    # 1. Check Redis Cache
     cached_candidates = await get_llm_cache(cache_key)
     if cached_candidates:
-        print(f"[Cache] Hit for key={cache_key}")
-        # Log even on cache hit (optional, but good for tracking usage)
         b_event = {
             "event": "editor_run_paraphrasing",
             "event_id": event_id,
@@ -566,13 +377,15 @@ async def paraphrase(req: ParaphraseRequest) -> ParaphraseResponse:
             "target_language": language,
             "target_intensity": intensity,
             "user_prompt": req.user_prompt,
+            "selected_reco_option_index": req.selected_reco_option_index,
+            "is_custom_option": req.is_custom_option,
             "created_at": _now_iso(),
-            "paraphrase_llm_version": "cache-hit", # Mark as cache hit
+            "paraphrase_llm_version": "cache-hit",
         }
-        produce_b_event(b_event)
+        append_jsonl("b.jsonl", b_event)
+        background_tasks.add_task(MongoLogger.log_event, "editor_run_paraphrasing", b_event)
         return ParaphraseResponse(candidates=cached_candidates)
 
-    # 2. Cache Miss -> Call LLM
     b_event = {
         "event": "editor_run_paraphrasing",
         "event_id": event_id,
@@ -587,10 +400,13 @@ async def paraphrase(req: ParaphraseRequest) -> ParaphraseResponse:
         "target_language": language,
         "target_intensity": intensity,
         "user_prompt": req.user_prompt,
+        "selected_reco_option_index": req.selected_reco_option_index,
+        "is_custom_option": req.is_custom_option,
         "created_at": _now_iso(),
         "paraphrase_llm_version": "gpt-4.1-nano",
     }
-    produce_b_event(b_event)
+    append_jsonl("b.jsonl", b_event)
+    background_tasks.add_task(MongoLogger.log_event, "editor_run_paraphrasing", b_event)
 
     if _openai_client is None:
         print("OPENAI_API_KEY is not configured. Returning fallback candidates.")
@@ -618,7 +434,6 @@ async def paraphrase(req: ParaphraseRequest) -> ParaphraseResponse:
         ) or ""
         candidates = _clean_candidates(raw_text, fallback_text)
         
-        # 3. Set Cache
         if candidates and candidates != fallback_candidates:
             await set_llm_cache(cache_key, candidates)
             
@@ -629,18 +444,23 @@ async def paraphrase(req: ParaphraseRequest) -> ParaphraseResponse:
 
 
 @app.post("/log")
-async def log_event(req: LogRequest) -> Dict[str, Any]:
+def log_event(req: LogRequest, background_tasks: BackgroundTasks) -> Dict[str, Any]:
     payload: Dict[str, Any] = req.model_dump()
     event = payload.get("event")
 
+    # Standardize event names for logger
     if event == "editor_run_paraphrasing":
-        produce_b_event(payload)
+        append_jsonl("b.jsonl", payload)
+        background_tasks.add_task(MongoLogger.log_event, "editor_run_paraphrasing", payload)
     elif event == "editor_selected_paraphrasing":
-        produce_c_event(payload)
+        append_jsonl("c.jsonl", payload)
+        background_tasks.add_task(MongoLogger.log_event, "editor_selected_paraphrasing", payload)
     elif event == "editor_document_snapshot":
-        produce_k_event(payload)
+        append_jsonl("k.jsonl", payload)
+        background_tasks.add_task(MongoLogger.log_event, "editor_document_snapshot", payload)
     else:
         append_jsonl("others.jsonl", payload)
+        background_tasks.add_task(MongoLogger.log_event, "others", payload)
 
     return {"status": "ok"}
 
@@ -649,7 +469,7 @@ app.include_router(auth_router, prefix="/auth")
 
 
 @app.get("/documents")
-async def list_documents(user_id: str = Query(...)) -> Dict[str, Any]:
+def list_documents(user_id: str = Query(...)) -> Dict[str, Any]:
     if not user_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -681,7 +501,7 @@ async def list_documents(user_id: str = Query(...)) -> Dict[str, Any]:
 
 
 @app.delete("/documents/{doc_id}")
-async def delete_document(doc_id: str, user_id: str = Query(...)) -> Dict[str, Any]:
+def delete_document(doc_id: str, user_id: str = Query(...)) -> Dict[str, Any]:
     if not user_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -694,7 +514,7 @@ async def delete_document(doc_id: str, user_id: str = Query(...)) -> Dict[str, A
 
 
 @app.get("/documents/{doc_id}")
-async def get_document(doc_id: str, user_id: str = Query(...)) -> Dict[str, Any]:
+def get_document(doc_id: str, user_id: str = Query(...)) -> Dict[str, Any]:
     if not user_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -723,7 +543,7 @@ async def get_document(doc_id: str, user_id: str = Query(...)) -> Dict[str, Any]
 
 
 @app.post("/documents")
-async def create_document(req: CreateDocumentRequest) -> Dict[str, Any]:
+def create_document(req: CreateDocumentRequest) -> Dict[str, Any]:
     if not req.user_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -749,7 +569,7 @@ async def create_document(req: CreateDocumentRequest) -> Dict[str, Any]:
 
 
 @app.patch("/documents/{doc_id}")
-async def update_document(
+def update_document(
     doc_id: str, req: UpdateDocumentRequest, background_tasks: BackgroundTasks
 ) -> Dict[str, Any]:
     if not req.user_id:

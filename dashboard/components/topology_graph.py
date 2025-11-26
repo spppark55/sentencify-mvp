@@ -39,14 +39,16 @@ def build_edges() -> list[Edge]:
     # Define edges to enforce hierarchy: User -> API -> [Services]
     return [
         Edge(source="User", target="API", label="HTTP"),
-        Edge(source="API", target="Emb Model", label="gRPC"),
-        Edge(source="Emb Model", target="VectorDB", label="Upsert"),
+        # API writes to DBs
         Edge(source="API", target="Mongo", label="Log/Read"),
         Edge(source="API", target="Redis", label="Cache"),
         Edge(source="API", target="GenAI (Run)", label="Paraphrase"),
         
-        # Worker Flow (Offline/Async)
+        # Worker Flow (Offline/Async ETL)
         Edge(source="Mongo", target="Worker", label="Stream"),
+        Edge(source="Worker", target="Emb Model", label="Compute"),
+        Edge(source="Emb Model", target="VectorDB", label="Vector"),
+        
         Edge(source="Worker", target="GenAI (Macro)", label="Analysis"),
         Edge(source="GenAI (Macro)", target="Redis", label="Write Cache"),
     ]

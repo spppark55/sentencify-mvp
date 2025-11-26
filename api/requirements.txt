@@ -21,3 +21,5 @@ python-Levenshtein
 numpy
 elasticsearch<9.0.0
 python-dateutil
+apscheduler
+requests

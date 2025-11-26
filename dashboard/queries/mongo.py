@@ -356,3 +356,254 @@ def get_node_recency_map(user_id: Optional[str] = None, lookback_seconds: int = 
         "genai_run": age_seconds(COLL_B),
         "genai_macro": age_seconds(COLL_F, "last_updated"),
     }
+
+@st.cache_data(ttl=10)
+def get_macro_impact_stats(user_id: Optional[str] = None) -> Dict[str, Any]:
+    match_stage = _with_user({}, user_id)
+    match_stage["doc_maturity_score"] = {"$exists": True, "$ne": None}
+    
+    pipeline = [
+        {"$match": match_stage},
+        {"$group": {
+            "_id": None,
+            "avg_alpha": {"$avg": "$doc_maturity_score"},
+            "bucket_low": {"$sum": {"$cond": [{"$lt": ["$doc_maturity_score", 0.3]}, 1, 0]}},
+            "bucket_mid": {"$sum": {"$cond": [{"$and": [{"$gte": ["$doc_maturity_score", 0.3]}, {"$lt": ["$doc_maturity_score", 0.7]}]}, 1, 0]}},
+            "bucket_high": {"$sum": {"$cond": [{"$gte": ["$doc_maturity_score", 0.7]}, 1, 0]}},
+            "count": {"$sum": 1}
+        }}
+    ]
+    
+    try:
+        res = list(_col(COLL_A).aggregate(pipeline))
+        if not res:
+            return {"avg_alpha": 0.0, "buckets": {"low": 0, "mid": 0, "high": 0}, "count": 0}
+        
+        data = res[0]
+        return {
+            "avg_alpha": data.get("avg_alpha", 0.0),
+            "buckets": {
+                "low": data.get("bucket_low", 0),
+                "mid": data.get("bucket_mid", 0),
+                "high": data.get("bucket_high", 0)
+            },
+            "count": data.get("count", 0)
+        }
+    except Exception:
+        return {"avg_alpha": 0.0, "buckets": {"low": 0, "mid": 0, "high": 0}, "count": 0}
+
+@st.cache_data(ttl=10)
+def get_hybrid_score_ratio(user_id: Optional[str] = None) -> Dict[str, float]:
+    match_stage = _with_user({}, user_id)
+    match_stage["applied_weight_doc"] = {"$exists": True, "$ne": None}
+    
+    pipeline = [
+        {"$match": match_stage},
+        {"$group": {
+            "_id": None,
+            "avg_alpha": {"$avg": "$applied_weight_doc"}
+        }}
+    ]
+    
+    try:
+        res = list(_col(COLL_A).aggregate(pipeline))
+        if not res:
+            return {"macro_ratio": 0.0, "micro_ratio": 1.0}
+        
+        avg_alpha = res[0].get("avg_alpha", 0.0)
+        return {"macro_ratio": avg_alpha, "micro_ratio": 1.0 - avg_alpha}
+    except Exception:
+        return {"macro_ratio": 0.0, "micro_ratio": 1.0}
+
+@st.cache_data(ttl=5)
+def get_k_doc_count(user_id: Optional[str] = None) -> int:
+    """Returns the total count of full documents."""
+    return _safe_count(COLL_K, _with_user({}, user_id))
+
+@st.cache_data(ttl=5)
+def get_recent_error_logs(limit: int = 5, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    """
+    Fetches critical error logs.
+    Since we don't have a dedicated error log collection yet, we use log_i_recommend (COLL_I)
+    and filter for high latency (> 2000ms) as a proxy for 'anomaly' or potential error.
+    """
+    query = _with_user({"latency_ms": {"$gt": 2000}}, user_id)
+    try:
+        cursor = (
+            _col(COLL_I)
+            .find(query, {"user_id": 1, "doc_id": 1, "latency_ms": 1, "created_at": 1})
+            .sort("created_at", -1)
+            .limit(limit)
+        )
+        return list(cursor)
+    except Exception:
+        return []
+
+
+@st.cache_data(ttl=5)
+def get_recent_docs(collection_name: str, limit: int = 10, user_id: Optional[str] = None, fields: Optional[Dict] = None) -> List[Dict[str, Any]]:
+    """
+    Generic fetcher for recent documents from a collection.
+    """
+    query = _with_user({}, user_id)
+    try:
+        # Default sort by created_at if it exists, otherwise natural order
+        sort_field = "created_at"
+        
+        # Special handling for collections that might use different timestamp fields
+        if collection_name == COLL_F:
+            sort_field = "last_updated"
+        elif collection_name == COLL_K:
+            sort_field = "last_synced_at"
+
+        cursor = (
+            _col(collection_name)
+            .find(query, fields)
+            .sort(sort_field, -1)
+            .limit(limit)
+        )
+        return list(cursor)
+    except Exception:
+        return []
+
+
+@st.cache_data(ttl=5)
+def get_recent_upserts(limit: int = 10, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    """
+    Fetches recent Vector DB upserts (context blocks).
+    """
+    return get_recent_docs(COLL_E, limit, user_id, {"doc_id": 1, "field": 1, "preview_text": 1, "created_at": 1})
+
+
+# --- Phase 1 Performance Analytics ---
+
+@st.cache_data(ttl=10)
+def get_conversion_funnel(user_id: Optional[str] = None) -> Dict[str, int]:
+    """
+    Calculates unique session counts for View (A) -> Run (B) -> Accept (C).
+    """
+    match_stage = _with_user({}, user_id)
+    
+    # View Count: Unique sessions in A
+    view_count = len(_col(COLL_A).distinct("recommend_session_id", match_stage))
+    
+    # Run Count: Unique sessions in B (that also exist in A ideally, but simplified here)
+    run_count = len(_col(COLL_B).distinct("recommend_session_id", match_stage))
+    
+    # Accept Count: Unique sessions in C where was_accepted=True
+    accept_match = {**match_stage, "was_accepted": True}
+    accept_count = len(_col(COLL_C).distinct("recommend_session_id", accept_match))
+    
+    return {
+        "view": view_count,
+        "run": run_count,
+        "accept": accept_count
+    }
+
+@st.cache_data(ttl=10)
+def get_rule_vs_vector_stats(user_id: Optional[str] = None, limit: int = 1000) -> Dict[str, Any]:
+    """
+    Analyzes Rule Engine intervention rate and P_vec correlation.
+    Returns:
+      - rule_trigger_rate: Ratio of logs where P_rule is present/non-empty.
+      - scatter_data: List of points {x: P_vec, y: P_rule} for plotting.
+    """
+    match_stage = _with_user({}, user_id)
+    
+    # We need logs that have P_vec. P_rule is optional or might be empty.
+    # Projection to minimize data transfer
+    projection = {"P_vec": 1, "P_rule": 1, "_id": 0}
+    
+    cursor = _col(COLL_A).find(match_stage, projection).sort("created_at", -1).limit(limit)
+    
+    points = []
+    rule_triggered_count = 0
+    total_count = 0
+    
+    for doc in cursor:
+        total_count += 1
+        
+        # Extract max score from P_vec (assuming dict {category: score})
+        p_vec_scores = doc.get("P_vec", {}) or {}
+        max_p_vec = max(p_vec_scores.values()) if p_vec_scores else 0.0
+        
+        # Extract max score from P_rule
+        p_rule_scores = doc.get("P_rule", {}) or {}
+        max_p_rule = max(p_rule_scores.values()) if p_rule_scores else 0.0
+        
+        if max_p_rule > 0:
+            rule_triggered_count += 1
+            
+        points.append({"x": max_p_vec, "y": max_p_rule})
+        
+    trigger_rate = (rule_triggered_count / total_count) if total_count > 0 else 0.0
+    
+    return {
+        "rule_trigger_rate": trigger_rate,
+        "scatter_data": points
+    }
+
+@st.cache_data(ttl=10)
+def get_latency_breakdown(user_id: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Calculates P50, P95, P99 latency and basic time-series data.
+    """
+    match_stage = _with_user({}, user_id)
+    match_stage["latency_ms"] = {"$exists": True, "$ne": None}
+    
+    # Sort by time for trend, then extract values
+    cursor = _col(COLL_I).find(match_stage, {"latency_ms": 1, "created_at": 1}).sort("created_at", -1).limit(500)
+    data = list(cursor)
+    
+    if not data:
+        return {"p50": 0, "p95": 0, "p99": 0, "trend": []}
+    
+    latencies = sorted([d["latency_ms"] for d in data])
+    n = len(latencies)
+    
+    def get_percentile(p):
+        idx = int(n * p)
+        return latencies[min(idx, n - 1)]
+    
+    # Trend data (simple list of dicts)
+    trend = [{"timestamp": d["created_at"], "latency": d["latency_ms"]} for d in data]
+    
+    return {
+        "p50": get_percentile(0.50),
+        "p95": get_percentile(0.95),
+        "p99": get_percentile(0.99),
+        "trend": trend
+    }
+
+@st.cache_data(ttl=10)
+def get_user_intent_stats(user_id: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Aggregates distribution of Categories (field) and Intensity.
+    Uses COLL_A as a proxy for user intent (input context).
+    Note: COLL_A doesn't strictly store 'field' as user selection, but 'reco_category_input' is the recommendation.
+    Better to use COLL_B (Run) or COLL_D (History) for explicit user choice.
+    Let's use COLL_B for 'Active Intent'.
+    """
+    match_stage = _with_user({}, user_id)
+    
+    # Aggregate Category
+    cat_pipeline = [
+        {"$match": match_stage},
+        {"$group": {"_id": "$target_category", "count": {"$sum": 1}}},
+        {"$sort": {"count": -1}}
+    ]
+    
+    # Aggregate Intensity
+    int_pipeline = [
+        {"$match": match_stage},
+        {"$group": {"_id": "$target_intensity", "count": {"$sum": 1}}},
+        {"$sort": {"count": -1}}
+    ]
+    
+    cats = list(_col(COLL_B).aggregate(cat_pipeline))
+    ints = list(_col(COLL_B).aggregate(int_pipeline))
+    
+    return {
+        "categories": {d["_id"]: d["count"] for d in cats if d["_id"]},
+        "intensities": {d["_id"]: d["count"] for d in ints if d["_id"]}
+    }

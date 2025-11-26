@@ -6,8 +6,15 @@ from typing import Optional
 
 import streamlit as st
 import pandas as pd
+import plotly.express as px
 
-from queries import get_recent_a_events, get_system_health, get_recent_activity_stream
+from queries import (
+    get_recent_a_events,
+    get_system_health,
+    get_recent_activity_stream,
+    get_macro_impact_stats,
+    get_hybrid_score_ratio
+)
 
 
 st.set_page_config(
@@ -63,10 +70,53 @@ def _sidebar_controls() -> Optional[str]:
     return user_id or None
 
 
+def _render_phase1_5_stats(user_id: Optional[str]):
+    st.markdown("### 🧬 Phase 1.5 Hybrid Performance (Micro vs Macro)")
+    
+    col1, col2 = st.columns(2)
+    
+    # 1. Hybrid Score Ratio
+    with col1:
+        ratio = get_hybrid_score_ratio(user_id)
+        data = {
+            "Component": ["Micro (Vector)", "Macro (Context)"],
+            "Contribution": [ratio["micro_ratio"], ratio["macro_ratio"]]
+        }
+        fig = px.pie(
+            data, values="Contribution", names="Component", 
+            title="Avg. Scoring Contribution",
+            color_discrete_sequence=px.colors.sequential.RdBu
+        )
+        fig.update_layout(height=300)
+        st.plotly_chart(fig, use_container_width=True)
+        
+    # 2. Macro Impact Stats (Alpha Distribution)
+    with col2:
+        stats = get_macro_impact_stats(user_id)
+        buckets = stats["buckets"]
+        b_data = {
+            "Maturity Range": ["Low (<0.3)", "Mid (0.3-0.7)", "High (>0.7)"],
+            "Count": [buckets["low"], buckets["mid"], buckets["high"]]
+        }
+        fig2 = px.bar(
+            b_data, x="Maturity Range", y="Count",
+            title=f"Document Maturity Distribution (Avg Alpha: {stats['avg_alpha']:.2f})",
+            color="Count",
+            color_continuous_scale="Viridis"
+        )
+        fig2.update_layout(height=300)
+        st.plotly_chart(fig2, use_container_width=True)
+
+
 def main() -> None:
     user_id = _sidebar_controls()
     st.title("Sentencify Dashboard")
     
+    # Phase 1.5 Stats Section
+    _render_phase1_5_stats(user_id)
+    
+    st.divider()
+
     # Main Content: Live Activity Stream
     st.markdown("### 📡 Live Activity Stream (All Events)")
     
