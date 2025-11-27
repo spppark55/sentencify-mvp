@@ -8,118 +8,109 @@ from pymongo import MongoClient
 from app.config import MONGO_URI, MONGO_DB_NAME
 from app.schemas.profile import UserProfile
 from app.services.logger import COLLECTIONS
-from app.utils.embedding import get_embedding
 
 class ProfileService:
     def __init__(self, mongo_client: Optional[MongoClient] = None):
         self.client = mongo_client or MongoClient(MONGO_URI)
         self.db = self.client[MONGO_DB_NAME]
-        # Use new collection names from v2.4 Schema
         self.col_a = self.db["editor_recommend_options"]
         self.col_b = self.db["editor_run_paraphrasing"]
         self.col_c = self.db["editor_selected_paraphrasing"]
-        self.col_d = self.db["correction_history"] # Legacy/Enterprise format
-        self.users_col = self.db["users"]
+        self.col_d = self.db["correction_history"] 
+        self.profile_col = self.db["user_profile"]
 
     def update_user_profile(self, user_id: str) -> Optional[UserProfile]:
         """
-        Full refresh of user profile statistics and embedding based on all historical logs.
+        Calculates user profile from A, B, C, D logs and upserts it to MongoDB.
+        Robust against Cold Start (no existing profile or logs).
         """
         if not user_id:
             return None
 
-        # 1. Overview Stats
-        total_recommend = self.col_a.count_documents({"user_id": user_id})
-        total_runs = self.col_b.count_documents({"user_id": user_id})
-        total_accepts = self.col_c.count_documents({"user_id": user_id, "was_accepted": True})
-        
-        overall_accept_rate = (total_accepts / total_runs) if total_runs > 0 else 0.0
+        print(f"[Profile] Starting update for {user_id}...", flush=True)
 
-        # 2. Preferences (from Run Logs - B)
-        # Fetch all B logs for this user
-        b_cursor = self.col_b.find({"user_id": user_id}, {"target_category": 1, "target_intensity": 1})
-        b_docs = list(b_cursor)
-        
-        cat_counts = Counter([d.get("target_category", "unknown") for d in b_docs])
-        int_counts = Counter([d.get("target_intensity", "unknown") for d in b_docs])
-        
-        # Convert to Maps (Ratios)
-        preferred_category_map = {k: v / total_runs for k, v in cat_counts.items()} if total_runs else {}
-        preferred_intensity_map = {k: v / total_runs for k, v in int_counts.items()} if total_runs else {}
-
-        # 3. Option Accept Rate (A vs B)
-        # Heuristic: How many B logs match the Top-1 recommendation of their A log?
-        # This requires joining A and B. Expensive for high volume, but fine for MVP profile refresh.
-        # We can optimize by only checking B logs and looking up A.
-        
-        option_match_count = 0
-        for b_doc in b_docs:
-            # Find corresponding A log
-            # Assuming we have recommend_session_id or similar linkage
-            # b_doc has 'recommend_session_id' or 'source_recommend_event_id'?
-            # Let's check main.py... B has 'source_recommend_event_id' which links to A's 'insert_id'
-            # OR 'recommend_session_id' linking both.
-            # Let's use recommend_session_id if available (usually simpler) or fallback.
-            # But we didn't project it above. Let's re-fetch or project it.
-            # Actually, doing N lookups here is bad. 
-            # For MVP, let's skip "Option Accept Rate" calculation in this loop to avoid 
-            # N+1 query problem unless we do an aggregation pipeline.
-            # Let's settle for "Result Accept Rate" which is `overall_accept_rate`.
-            pass
-
-        accept_rate_by_feature = {
-            "final_result": overall_accept_rate,
-            "option_match": 0.0 # Placeholder for Phase 3
+        # 1. Initialize Defaults
+        stats = {
+            "total_recommend": 0,
+            "total_runs": 0,
+            "total_accepts": 0,
+            "accept_rate": 0.0
         }
-
-        # 4. User Embedding (from Correction History - D)
-        # User 'accepted' sentences.
-        # Filter: selected_index is not None (and numeric)
-        # Note: 'correction_history' user field might be ObjectId or String depending on importer.
-        # We'll try string match first.
-        
-        # Query for D
-        # Check if user_id is string or objectid in DB... usually string in MVP if logged via API.
-        d_cursor = self.col_d.find({
-            "user": user_id,  # Assuming user_id is stored as string or compatible
-            "selected_index": {"$ne": None, "$type": "number"}
-        })
-        
-        embeddings = []
-        for d_doc in d_cursor:
-            try:
-                idx = d_doc.get("selected_index")
-                outputs = d_doc.get("output_sentences", [])
-                if idx is not None and 0 <= idx < len(outputs):
-                    final_text = outputs[idx]
-                    vec = get_embedding(final_text)
-                    if vec:
-                        embeddings.append(vec)
-            except Exception:
-                continue
-        
+        preferences = {
+            "category": {},
+            "intensity": {}
+        }
         user_embedding = []
-        if embeddings:
-            user_embedding = np.mean(embeddings, axis=0).tolist()
 
-        # 5. Construct & Save Profile
-        profile = UserProfile(
-            user_id=user_id,
-            total_recommend_count=total_recommend,
-            total_accept_count=total_accepts,
-            overall_accept_rate=overall_accept_rate,
-            paraphrase_execution_count=total_runs,
-            accept_rate_by_feature=accept_rate_by_feature,
-            preferred_category_map=preferred_category_map,
-            preferred_intensity_map=preferred_intensity_map,
-            user_embedding_v1=user_embedding,
-            updated_at=datetime.utcnow()
-        )
-        
-        self.users_col.update_one(
-            {"user_id": user_id},
-            {"$set": profile.model_dump()},
-            upsert=True
-        )
-        
-        return profile
+        # 2. Aggregation (Source of Truth: Logs)
+        try:
+            # A. Count Recommendations
+            stats["total_recommend"] = self.col_a.count_documents({"user_id": user_id})
+            
+            # B. Run Logs (Counts & Preferences)
+            b_cursor = self.col_b.find({"user_id": user_id}, {"target_category": 1, "target_intensity": 1})
+            b_docs = list(b_cursor)
+            stats["total_runs"] = len(b_docs)
+            
+            if b_docs:
+                cat_counts = Counter([d.get("target_category", "unknown") for d in b_docs if d.get("target_category")])
+                int_counts = Counter([d.get("target_intensity", "unknown") for d in b_docs if d.get("target_intensity")])
+                
+                # Calculate Ratios
+                if stats["total_runs"] > 0:
+                    preferences["category"] = {k: v / stats["total_runs"] for k, v in cat_counts.items()}
+                    preferences["intensity"] = {k: v / stats["total_runs"] for k, v in int_counts.items()}
+
+            # C. Accept Logs
+            stats["total_accepts"] = self.col_c.count_documents({"user_id": user_id, "was_accepted": True})
+            
+            if stats["total_runs"] > 0:
+                stats["accept_rate"] = stats["total_accepts"] / stats["total_runs"]
+
+            # D. Behavior Embedding
+            # Query for D logs that have vector_synced=True
+            d_cursor = self.col_d.find({
+                "user_id": user_id, 
+                "vector_synced": True,
+                "context_embedding": {"$exists": True, "$ne": None, "$not": {"$size": 0}}
+            }, {"context_embedding": 1})
+            
+            embeddings = [d.get("context_embedding") for d in d_cursor if d.get("context_embedding")]
+            
+            if embeddings:
+                user_embedding = np.mean(embeddings, axis=0).tolist()
+            
+        except Exception as e:
+            print(f"[Profile] Aggregation error for {user_id}: {e}", flush=True)
+            # Continue with defaults if partial failure
+
+        # 3. Construct & Save (Upsert)
+        try:
+            profile_data = UserProfile(
+                user_id=user_id,
+                total_recommend_count=stats["total_recommend"],
+                total_accept_count=stats["total_accepts"],
+                overall_accept_rate=stats["accept_rate"],
+                paraphrase_execution_count=stats["total_runs"],
+                accept_rate_by_feature={
+                    "final_result": stats["accept_rate"],
+                    "option_match": 0.0
+                },
+                preferred_category_map=preferences["category"],
+                preferred_intensity_map=preferences["intensity"],
+                user_embedding_v1=user_embedding,
+                updated_at=datetime.utcnow()
+            )
+            
+            # Update G
+            self.profile_col.update_one(
+                {"user_id": user_id},
+                {"$set": profile_data.model_dump()},
+                upsert=True
+            )
+            print(f"[Profile] Successfully updated profile for {user_id}", flush=True)
+            return profile_data
+
+        except Exception as e:
+            print(f"[Profile] DB Upsert error for {user_id}: {e}", flush=True)
+            return None

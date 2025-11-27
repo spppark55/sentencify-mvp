@@ -84,6 +84,7 @@ class ParaphraseRequest(BaseModel):
 
 class ParaphraseResponse(BaseModel):
     candidates: List[str]
+    history_id: Optional[str] = None
 
 
 class LogRequest(BaseModel):
@@ -491,18 +492,112 @@ async def paraphrase(req: ParaphraseRequest, background_tasks: BackgroundTasks) 
         return ParaphraseResponse(candidates=fallback_candidates)
 
 
+def trigger_immediate_profile_update(user_id: str):
+    """
+    Background Task로 실행될 함수:
+    1. MongoDB 프로필 재계산 (Source of Truth 갱신)
+    2. Qdrant 벡터 동기화 (Read Model 갱신)
+    """
+    try:
+        print(f"[Trigger] Updating profile for {user_id} immediately...")
+        from app.services.profile_service import ProfileService
+        from app.services.sync_service import SyncService
+        
+        # [Fix] Initialize MongoClient locally to avoid NoneType error from global _mongo_client
+        local_mongo_client = MongoClient(MONGO_URI)
+        
+        # 의존성 주입
+        profile_service = ProfileService(mongo_client=local_mongo_client)
+        
+        # Qdrant Client는 매번 생성하거나 get_qdrant_client() 활용
+        from app.qdrant.client import get_qdrant_client
+        q_client = get_qdrant_client()
+        sync_service = SyncService(mongo_client=local_mongo_client, qdrant_client=q_client)
+
+        # 1. Mongo Update
+        profile_service.update_user_profile(user_id)
+        
+        # 2. Qdrant Sync
+        sync_service.sync_user_to_qdrant(user_id)
+        
+        print(f"[Trigger] Profile update & sync complete for {user_id}")
+        
+        # Close local connection
+        local_mongo_client.close()
+        
+    except Exception as e:
+        print(f"!!! CRITICAL PROFILE ERROR !!!")
+        traceback.print_exc()
+        print(f"[Trigger] Failed to update profile: {e}")
+
+
 @app.post("/log")
 def log_event(req: LogRequest, background_tasks: BackgroundTasks) -> Dict[str, Any]:
     payload: Dict[str, Any] = req.model_dump()
+    
+    # [DEBUG] Log the incoming payload to debug triggers
+    print(f"🔥 [API_DEBUG] /log received payload: {payload}", flush=True)
+
     event = payload.get("event")
+    
+    # [DEBUG] Check event value
+    print(f"🔍 [DEBUG] Event received: '{event}' (Type: {type(event)})", flush=True)
 
     # Standardize event names for logger
     if event == "editor_run_paraphrasing":
         append_jsonl("b.jsonl", payload)
         background_tasks.add_task(MongoLogger.log_event, "editor_run_paraphrasing", payload)
     elif event == "editor_selected_paraphrasing":
+        print("🔥 [DEBUG] MATCHED: editor_selected_paraphrasing", flush=True)
+        
+        # 1. Log C (Original Event)
         append_jsonl("c.jsonl", payload)
         background_tasks.add_task(MongoLogger.log_event, "editor_selected_paraphrasing", payload)
+        
+        # 2. [Dual-Write] Log D (Correction History) generation
+        input_text = payload.get("original_text")
+        output_text = payload.get("selected_text") or payload.get("selected_candidate_text")
+
+        if input_text and output_text:
+            print(f"💾 [Dual-Write] Converting Log to Correction History (D)...", flush=True)
+            
+            d_doc = {
+                "event": "correction_history",
+                "insert_id": str(uuid.uuid4()),
+                "user_id": payload.get("user_id"),
+                "doc_id": payload.get("doc_id"),
+                "recommend_session_id": payload.get("recommend_session_id"),
+                
+                # --- Mapping Logic ---
+                "input_sentence": input_text,
+                "output_sentences": [output_text], # List format
+                "selected_index": 0,
+                
+                "intensity": payload.get("maintenance") or payload.get("intensity") or "moderate",
+                "field": payload.get("field") or "general",
+                
+                "created_at": payload.get("created_at") or _now_iso(),
+                "vector_synced": False
+            }
+            
+            # Save D Log
+            append_jsonl("d.jsonl", d_doc)
+            background_tasks.add_task(MongoLogger.log_event, "correction_history", d_doc)
+            print(f"✅ [Dual-Write] Created D-Log for user {d_doc['user_id']}", flush=True)
+
+        # 3. Trigger Profile Update
+        was_accepted = payload.get("was_accepted")
+        print(f"🔥 [DEBUG] Checking was_accepted: {was_accepted} (Type: {type(was_accepted)})", flush=True)
+        
+        if was_accepted is True:
+            user_id = payload.get("user_id")
+            print(f"🚀 [Trigger] Immediate Profile Update for {user_id}", flush=True)
+            if user_id:
+                # [DEBUG] Run synchronously to debug logging issues
+                trigger_immediate_profile_update(user_id)
+        else:
+            print("🔥 [DEBUG] was_accepted is not True", flush=True)
+
     elif event == "editor_document_snapshot":
         append_jsonl("k.jsonl", payload)
         background_tasks.add_task(MongoLogger.log_event, "editor_document_snapshot", payload)

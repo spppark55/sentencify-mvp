@@ -17,10 +17,11 @@ GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
 # MongoDB 설정
 MONGO_URI = os.getenv("MONGO_URI", "mongodb://mongo:27017")
+MONGO_DB_NAME = os.getenv("MONGO_DB_NAME", "sentencify")
 
 # Qdrant 설정
 QDRANT_HOST = os.getenv("QDRANT_HOST", "qdrant")
-QDRANT_PORT = os.getenv("QDRANT_PORT", "6333")
+QDRANT_PORT = os.getenv("QDRANT_HOST", "6333")
 
 # Redis 설정
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")

@@ -36,9 +36,11 @@ def recommend_intensity(
     p_user = {'weak': 0.33, 'moderate': 0.34, 'strong': 0.33} # Default (Uniform)
     
     try:
+        print("[Intensity_Rec] Entering Path A Try Block", flush=True)
         # Generate Qdrant Point ID from user_id (UUIDv5)
         # Must match the logic in SyncService
         user_point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, user_id))
+        print(f"[Intensity_Rec] Generated Point ID for {user_id}: {user_point_id}", flush=True)
         
         user_points = qdrant_client.retrieve(
             collection_name=QDRANT_COLLECTION_USER,
@@ -46,8 +48,12 @@ def recommend_intensity(
             with_payload=["preferred_intensity_map"]
         )
         
+        print(f"[Intensity_Rec] Retrieve Result: {user_points}", flush=True)
+        
         if user_points:
             payload = user_points[0].payload or {}
+            print(f"[Intensity_Rec] User Payload: {payload}", flush=True)
+            
             pref_map = payload.get("preferred_intensity_map")
             if isinstance(pref_map, dict) and pref_map:
                 # Normalize keys to ensure matching terms
@@ -65,7 +71,7 @@ def recommend_intensity(
                     for k in ['weak', 'moderate', 'strong']:
                         p_user.setdefault(k, 0.0)
     except Exception as e:
-        logger.warning(f"[Intensity_Rec] Path A (User) Error: {e}")
+        print(f"[Intensity_Rec] Path A (User) Error: {e}", flush=True)
 
     # -------------------------------------------------------
     # 2. Path B: History-Based (P_vec2)
@@ -103,7 +109,7 @@ def recommend_intensity(
                     for k in ['weak', 'moderate', 'strong']
                 }
     except Exception as e:
-        logger.warning(f"[Intensity_Rec] Path B (History) Error: {e}")
+        print(f"[Intensity_Rec] Path B (History) Error: {e}", flush=True)
 
     # -------------------------------------------------------
     # 3. Hybrid Calculation

@@ -69,6 +69,7 @@ def sync_vectors():
             session_id = doc.get("recommend_session_id")
             
             is_accepted = False
+            accepted_c = None
             if session_id:
                 # Check C collection
                 accepted_c = db["editor_selected_paraphrasing"].find_one({
@@ -96,6 +97,8 @@ def sync_vectors():
                     "context_hash": doc.get("context_hash"),
                     "content": text,
                     "field": doc.get("field", "general"),
+                    # Fix: Add intensity from C event for P_vec2 calculation
+                    "intensity": accepted_c.get("target_intensity") or accepted_c.get("maintenance") or "moderate"
                 }
                 
                 point_id = doc.get("insert_id")

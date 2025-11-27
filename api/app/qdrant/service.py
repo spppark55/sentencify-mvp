@@ -29,15 +29,15 @@ def compute_p_vec(query_vector, limit=15):
 
     for hit in results:
         category = hit.payload.get("field")
-        try:
-            print(
-                f"[DEBUG] 3. Hit: score={hit.score:.4f}, "
-                f"category={category}, "
-                f"text={(hit.payload.get('preview_text') or hit.payload.get('context_full_preview', ''))[:30]}...",
-                flush=True,
-            )
-        except Exception:
-            print("[DEBUG] Hit: <error printing hit>")
+        # try:
+        #     print(
+        #         f"[DEBUG] 3. Hit: score={hit.score:.4f}, "
+        #         f"category={category}, "
+        #         f"text={(hit.payload.get('preview_text') or hit.payload.get('context_full_preview', ''))[:30]}...",
+        #         flush=True,
+        #     )
+        # except Exception:
+        #     print("[DEBUG] Hit: <error printing hit>")
 
         if category:
             category_scores[category] += hit.score  # score 기반 가중

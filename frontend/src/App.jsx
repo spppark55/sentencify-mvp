@@ -469,13 +469,16 @@ export default function App() {
       final_category: category,
     });
 
+    console.log("✅ [Frontend] Sent acceptance log for index:", index);
+
     logEvent({
-      event: 'correction_history',
+      event: 'editor_selected_paraphrasing',
       history_id: uuidv4(),
       user_id: effectiveUser?.id,
       doc_id: docId,
       original_text: originalText,
       selected_text: candidate,
+      was_accepted: true,
       created_at: new Date().toISOString(),
     });
   };

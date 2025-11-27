@@ -20,7 +20,7 @@ class SyncService:
     def __init__(self, mongo_client: MongoClient, qdrant_client: QdrantClient):
         self.db = mongo_client["sentencify"] # or get from env
         self.q_client = qdrant_client
-        self.users_col = self.db["users"]
+        self.users_col = self.db["user_profile"] # Updated from "users"
 
     def _get_vector_safe(self, data: Dict, key: str, expected_len: int) -> List[float]:
         """Helper to safely extract or pad vectors."""
@@ -75,7 +75,7 @@ class SyncService:
         try:
             user_doc = self.users_col.find_one({"user_id": user_id})
             if not user_doc:
-                logger.warning(f"User {user_id} not found in Mongo.")
+                print(f"[Sync] User {user_id} not found in Mongo.", flush=True)
                 return False
 
             # Generate UUID
@@ -103,70 +103,23 @@ class SyncService:
                 # Store maps in payload for easy retrieval by Recommendation Service
                 "preferred_category_map": user_doc.get("preferred_category_map"),
                 "preferred_intensity_map": user_doc.get("preferred_intensity_map"),
-                # Store the actual User Embedding (Behavior) separately if needed
-                # Qdrant allows named vectors, but for now we use the main vector for 'Explicit Preference'.
-                # 'user_embedding_v1' (BERT) is different from this 'Preference Vector'.
-                # Ideally, Qdrant should store user_embedding_v1 as the main vector for Semantic Search?
-                # The 'step3' script used Preference Vector (15-dim) as main. 
-                # Recommendation Service uses `user_embedding` (BERT) as query vector?
-                # WAIT. `recommend_intensity_by_similarity` takes `user_embedding` (BERT) as input.
-                # If Qdrant stores Preference Vector (15-dim), we cannot compare BERT(768) with Pref(15).
-                # CRITICAL MISMATCH in previous design?
-                # Let's fix this: 
-                # Strategy A: Qdrant stores BERT embedding (768) as main vector. Payload has preferences.
-                # Strategy B: Qdrant stores Pref embedding (15). Query uses Pref vector.
-                
-                # Re-reading Architecture: "Phase 3 ... User Embedding (P_user) ... BERT Based"
-                # So Qdrant MUST store the 768-dim BERT embedding if we want to find "Similar Context Users".
-                # BUT `step3` script was creating 15-dim vectors.
-                # We should support Dual Vectors or switch to BERT 768 for the main collection `user_behavior_v1`.
-                # Given the `recommend_intensity_by_similarity` takes `user_embedding` (List[float]) which comes from text,
-                # it implies 768-dim.
-                # So, `sync_user_to_qdrant` SHOULD upsert the 768-dim `user_embedding_v1`.
             }
             
-            # Decision: Upsert BERT vector (768) if available.
-            # If not available, we can't support Semantic User Search yet.
-            bert_vector = user_doc.get("user_embedding_v1")
+            # Use 15-dim Preference Vector
+            # BERT Vector (768) is not used for the main vector in 'user_behavior_v1' (which is 15-dim).
             
-            if bert_vector and len(bert_vector) > 0:
-                # We assume the collection is configured for 768 dim in this refined logic.
-                # BUT `step3` configured it for 15.
-                # We need to recreate the collection if we change dimensions.
-                # For MVP "Fast Track", let's stick to 15-dim Preference Similarity if that's what `step3` did.
-                # BUT `recommend_intensity_by_similarity` input comes from `step1_eda` which is BERT.
-                # Conflict!
-                # Resolution: The Recommendation Service should find users with similar *Preferences* (15-dim) OR *Behavior* (768-dim).
-                # Finding users with similar "Explicit Preferences" (Category/Intensity) is safer for Intensity Recommendation.
-                # "Users who like 'Thesis' also like 'Strong' intensity."
-                # So let's stick to 15-dim Preference Vector for `user_behavior_v1`.
-                # AND update `recommend_intensity_by_similarity` to expect a 15-dim vector, OR 
-                # we change `user_behavior_v1` to 768.
-                
-                # Let's go with 768-dim (BERT) because it's "Behavioral".
-                # It captures "Style". Similar style users -> Similar intensity.
-                # So I will use `user_embedding_v1` (768) as the vector.
-                # I will recreate the collection in Worker if needed or assume 768.
-                # Since `step3` is legacy, we will override it here.
-                
-                # If user has no embedding, we can't upsert for behavioral search.
-                pass
-            else:
-                # Fallback?
-                return False
-
             # Upsert
             self.q_client.upsert(
                 collection_name=COLLECTION_NAME,
                 points=[PointStruct(
                     id=point_id, 
-                    vector=bert_vector, 
+                    vector=full_vector, 
                     payload=payload
                 )]
             )
-            logger.info(f"Synced user {user_id} to Qdrant (768-dim).")
+            print(f"[Sync] Synced user {user_id} to Qdrant (Vector 15-dim).", flush=True)
             return True
 
         except Exception as e:
-            logger.error(f"Sync failed for {user_id}: {e}")
+            print(f"[Sync] Sync failed for {user_id}: {e}", flush=True)
             return False
