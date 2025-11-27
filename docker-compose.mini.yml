@@ -23,6 +23,7 @@ services:
       - ./api/app:/app/app
       - ./scripts:/app/scripts
       - ./api/train_data.csv:/app/train_data.csv
+      - ./data:/app/data # Added to access import data
       - ./models:/app/models
       - /etc/localtime:/etc/localtime:ro # Added for timezone synchronization
     networks:

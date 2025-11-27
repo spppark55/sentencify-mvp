@@ -302,6 +302,7 @@ export default function App() {
     try {
       // HEAD의 실제 API 호출
       const res = await postRecommend(payload);
+      console.log("🔥 [DEBUG] Full API Response Object:", res);
 
       setRecommendId(res.recommend_session_id);
       setRecommendInsertId(res.insert_id);
@@ -318,6 +319,30 @@ export default function App() {
       const topOption = res.reco_options?.[0];
       if (topOption?.category && optEnabled.category) setCategory(topOption.category);
       if (topOption?.language && optEnabled.language) setLanguage(topOption.language);
+      
+      // 1. 강도(Intensity) 값 탐색 (우선순위: 추천값 -> 일반값 -> 옵션값 -> Fallback)
+      const recommendedStr = 
+        res.recommended_intensity || 
+        res.intensity || 
+        res.recommendedIntensity || 
+        topOption?.intensity || 
+        'moderate'; // Fallback
+
+      console.log("✅ [DEBUG] Extracted Intensity String:", recommendedStr);
+
+      if (recommendedStr) {
+        const map = { weak: 0, moderate: 1, medium: 1, strong: 2 };
+        const val = map[recommendedStr.toLowerCase()];
+        
+        if (typeof val === 'number') {
+          setStrength(val);
+          
+          // 2. 옵션이 꺼져있다면 자동으로 켜줌 (UX)
+          if (!optEnabled.strength) {
+            setOptEnabled(prev => ({ ...prev, strength: true }));
+          }
+        }
+      }
 
       logEvent({
         event: 'editor_recommend_options',

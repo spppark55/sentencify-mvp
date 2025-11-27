@@ -31,11 +31,27 @@ PROMPT = """당신은 전문 교정 전문가입니다. 아래 지침에 따라 
 교정된 문장 3개:"""
 
 
+def clean_text(text: str) -> str:
+    """
+    불필요한 공백과 빈 줄을 제거하여 텍스트를 정리합니다.
+    (OpenAI의 불필요한 들여쓰기나 이중 줄바꿈 해결)
+    """
+    if not text:
+        return ""
+    # 1. 각 줄의 앞뒤 공백 제거
+    # 2. 빈 줄은 제외하고 다시 합침
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    return "\n".join(lines)
+
+
 def measure_gemini(prompt: str, iterations: int = 1):
     """Gemini 응답 시간 + 응답 내용 반환"""
     gemini_times = []
     responses = []
-    model = genai.GenerativeModel("models/gemini-2.5-flash")
+    # Gemini 모델 설정
+    model = genai.GenerativeModel("models/gemini-2.5-flash") 
+    # (참고: gemini-2.5-flash는 아직 공개 전일 수 있어 2.0 또는 1.5로 확인 필요, 
+    #  코드상의 모델명은 사용자 환경에 맞게 유지했습니다)
 
     for _ in range(iterations):
         start = time.perf_counter()
@@ -44,7 +60,7 @@ def measure_gemini(prompt: str, iterations: int = 1):
         elapsed = time.perf_counter() - start
 
         gemini_times.append(elapsed)
-        responses.append(text)
+        responses.append(clean_text(text)) # 텍스트 정리 적용
 
     return mean(gemini_times), responses
 
@@ -57,15 +73,18 @@ def measure_openai(prompt: str, iterations: int = 1):
 
     for _ in range(iterations):
         start = time.perf_counter()
+        # 사용자의 환경에 맞춘 메서드 유지 (client.responses.create)
+        # 일반적인 Chat Completion은 client.chat.completions.create 입니다.
         response = client.responses.create(
             model="gpt-4.1-nano",
             input=prompt,
         )
+        # 응답 객체 구조에 따라 .output_text가 맞는지 확인 필요
         text = response.output_text
         elapsed = time.perf_counter() - start
 
         openai_times.append(elapsed)
-        responses.append(text)
+        responses.append(clean_text(text)) # 텍스트 정리 적용
 
     return mean(openai_times), responses
 
@@ -75,21 +94,21 @@ def main():
     genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
     os.environ["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY", "")
 
-    print("⏳ Gemini 테스트 중...")
+    print("Gemini 테스트 중...")
     gemini_avg, gemini_responses = measure_gemini(PROMPT)
 
-    print("⏳ OpenAI 테스트 중...")
+    print("OpenAI 테스트 중...")
     openai_avg, openai_responses = measure_openai(PROMPT)
 
-    print("\n===== 📊 결과 비교 =====")
+    print("\n===== 결과 비교 =====")
     print(f"Gemini 평균 응답 시간: {gemini_avg:.3f} 초")
     print(f"OpenAI 평균 응답 시간: {openai_avg:.3f} 초")
 
-    print("\n===== ✨ Gemini 응답 =====")
+    print("\n===== Gemini 응답 =====")
     for i, resp in enumerate(gemini_responses):
         print(f"\n--- Gemini 응답 #{i+1} ---\n{resp}")
 
-    print("\n===== 🤖 OpenAI 응답 =====")
+    print("\n===== OpenAI 응답 =====")
     for i, resp in enumerate(openai_responses):
         print(f"\n--- OpenAI 응답 #{i+1} ---\n{resp}")
 

@@ -1,126 +1,140 @@
 import logging
-from collections import defaultdict
-from typing import List, Dict, Any
+import uuid
+from collections import Counter, defaultdict
+from typing import List, Dict, Any, Tuple
 
 from qdrant_client import QdrantClient
 from qdrant_client.http import models
 from pymongo.collection import Collection
 
 # Constants
-DEFAULT_INTENSITY = "moderate"
 SEARCH_LIMIT_K = 10
-QDRANT_COLLECTION_NAME = "user_behavior_v1"
+QDRANT_COLLECTION_USER = "user_behavior_v1"
+QDRANT_COLLECTION_HISTORY = "correction_history_v1"
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("uvicorn")
 
-from typing import List, Dict, Any, Tuple
-
-# ... imports ...
-
-def recommend_intensity_by_similarity(
-    user_embedding: List[float],
-    qdrant_client: QdrantClient,
-    mongo_user_collection: Collection
-) -> Tuple[str, Dict[str, Any]]:
+def recommend_intensity(
+    user_id: str, 
+    context_vector: List[float], 
+    qdrant_client: QdrantClient
+) -> str:
     """
-    Recommends intensity based on similar users (Weighted Voting).
-    Returns: (recommended_intensity, debug_info)
+    Dual-Path Intensity Recommendation (User-Based + History-Based).
+    
+    Args:
+        user_id: 사용자 ID
+        context_vector: 현재 입력 문장의 임베딩 벡터 (768 dim)
+        qdrant_client: Qdrant 연결 클라이언트
+    Returns:
+        final_intensity: 추천된 강도 (예: 'weak', 'moderate', 'strong')
     """
-    debug_info = {
-        "embedding_dim": 0,
-        "similar_users_count": 0,
-        "top_similarity_score": 0.0,
-        "fallback_count": 0,
-        "voting_scores": {},
-        "status": "init"
-    }
-
-    if not user_embedding:
-        logger.warning("Recommendation skipped: Empty user embedding.")
-        debug_info["status"] = "skipped_empty_embedding"
-        return DEFAULT_INTENSITY, debug_info
-
-    debug_info["embedding_dim"] = len(user_embedding)
-
+    
+    # -------------------------------------------------------
+    # 1. Path A: User-Based (P_user)
+    # -------------------------------------------------------
+    p_user = {'weak': 0.33, 'moderate': 0.34, 'strong': 0.33} # Default (Uniform)
+    
     try:
-        # 1. Search similar users
-        logger.info(f"[Rec] Searching similar users for embedding (dim={len(user_embedding)})...")
+        # Generate Qdrant Point ID from user_id (UUIDv5)
+        # Must match the logic in SyncService
+        user_point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, user_id))
         
-        search_result = qdrant_client.search(
-            collection_name=QDRANT_COLLECTION_NAME,
-            query_vector=user_embedding,
-            limit=SEARCH_LIMIT_K,
-            with_payload=["preferred_strength_vector", "preferred_intensity_map", "user_id"]
+        user_points = qdrant_client.retrieve(
+            collection_name=QDRANT_COLLECTION_USER,
+            ids=[user_point_id],
+            with_payload=["preferred_intensity_map"]
         )
-
-        if not search_result:
-            logger.info("[Rec] Cold Start: No similar users found.")
-            debug_info["status"] = "cold_start_no_hits"
-            return DEFAULT_INTENSITY, debug_info
-            
-        debug_info["similar_users_count"] = len(search_result)
-        debug_info["top_similarity_score"] = float(search_result[0].score)
-        logger.info(f"[Rec] Found {len(search_result)} similar users. Top score: {search_result[0].score:.4f}")
-
-        # 2. Weighted Voting
-        scores: Dict[str, float] = defaultdict(float)
         
-        def normalize_key(k: str) -> str:
-            return k.lower().strip()
-
-        missing_payload_users = []
-
-        for hit in search_result:
-            payload = hit.payload or {}
-            similarity = hit.score
+        if user_points:
+            payload = user_points[0].payload or {}
             pref_map = payload.get("preferred_intensity_map")
-            
-            if not pref_map:
-                user_id = payload.get("user_id")
-                if user_id:
-                    missing_payload_users.append(user_id)
-            else:
-                if isinstance(pref_map, dict):
-                    for intensity, weight in pref_map.items():
-                        scores[normalize_key(intensity)] += (weight * similarity)
+            if isinstance(pref_map, dict) and pref_map:
+                # Normalize keys to ensure matching terms
+                normalized_map = {}
+                total_weight = 0.0
+                for k, v in pref_map.items():
+                    k_norm = k.lower().strip()
+                    if k_norm in ['weak', 'moderate', 'strong']:
+                        normalized_map[k_norm] = float(v)
+                        total_weight += float(v)
+                
+                if total_weight > 0:
+                    p_user = {k: v / total_weight for k, v in normalized_map.items()}
+                    # Fill missing keys with 0.0
+                    for k in ['weak', 'moderate', 'strong']:
+                        p_user.setdefault(k, 0.0)
+    except Exception as e:
+        logger.warning(f"[Intensity_Rec] Path A (User) Error: {e}")
 
-        # Fallback
-        if missing_payload_users:
-            debug_info["fallback_count"] = len(missing_payload_users)
-            logger.info(f"[Rec] Fallback to Mongo for {len(missing_payload_users)} users missing payload.")
-            cursor = mongo_user_collection.find(
-                {"user_id": {"$in": missing_payload_users}}, 
-                {"user_id": 1, "preferred_intensity_map": 1}
-            )
-            user_prefs = {d["user_id"]: d.get("preferred_intensity_map") for d in cursor}
+    # -------------------------------------------------------
+    # 2. Path B: History-Based (P_vec2)
+    # -------------------------------------------------------
+    p_vec2 = {'weak': 0.0, 'moderate': 0.0, 'strong': 0.0}
+    found_count = 0
+    
+    try:
+        search_result = qdrant_client.query_points(
+            collection_name=QDRANT_COLLECTION_HISTORY,
+            query=context_vector,
+            limit=SEARCH_LIMIT_K,
+            with_payload=["intensity"]
+        ).points
+        
+        found_count = len(search_result)
+        
+        if found_count > 0:
+            # Count frequencies
+            intensity_counts = Counter()
+            valid_hits = 0
             
             for hit in search_result:
-                uid = hit.payload.get("user_id")
-                if uid in missing_payload_users and uid in user_prefs:
-                    p_map = user_prefs[uid]
-                    if p_map and isinstance(p_map, dict):
-                        for intensity, weight in p_map.items():
-                            scores[normalize_key(intensity)] += (weight * hit.score)
-
-        # 3. Determine Winner
-        if not scores:
-            logger.info("[Rec] No valid intensity preferences found among similar users.")
-            debug_info["status"] = "no_valid_votes"
-            return DEFAULT_INTENSITY, debug_info
-
-        best_intensity = max(scores, key=scores.get)
-        
-        # Update Debug Info
-        debug_info["voting_scores"] = dict(scores)
-        debug_info["winner"] = best_intensity
-        debug_info["status"] = "success"
-        
-        logger.info(f"[Rec] Voting Scores: {dict(scores)}")
-        logger.info(f"[Rec] Final Recommendation: {best_intensity} (Score: {scores[best_intensity]:.4f})")
-        
-        return best_intensity, debug_info
-
+                payload = hit.payload or {}
+                intensity = payload.get("intensity")
+                if intensity:
+                    intensity = intensity.lower().strip()
+                    if intensity in ['weak', 'moderate', 'strong']:
+                        intensity_counts[intensity] += 1
+                        valid_hits += 1
+            
+            if valid_hits > 0:
+                p_vec2 = {
+                    k: intensity_counts[k] / valid_hits 
+                    for k in ['weak', 'moderate', 'strong']
+                }
     except Exception as e:
-        logger.error(f"Recommendation error: {e}", exc_info=True)
-        debug_info["status"] = f"error: {str(e)}"
-        return DEFAULT_INTENSITY, debug_info
+        logger.warning(f"[Intensity_Rec] Path B (History) Error: {e}")
+
+    # -------------------------------------------------------
+    # 3. Hybrid Calculation
+    # -------------------------------------------------------
+    final_scores = {}
+    w_user = 0.4
+    w_vec2 = 0.6
+    
+    # If P_vec2 is empty (Cold Start), rely 100% on P_user?
+    # The prompt says: "Final_Score = (P_user * 0.4) + (P_vec2 * 0.6)"
+    # But implies P_vec2 is 0s. 
+    # However, typically if one path is cold, we might rebalance.
+    # Strictly following prompt: P_vec2 is 0 if cold start.
+    
+    for k in ['weak', 'moderate', 'strong']:
+        score = (p_user.get(k, 0.0) * w_user) + (p_vec2.get(k, 0.0) * w_vec2)
+        final_scores[k] = round(score, 4)
+
+    # Select Winner
+    selected_intensity = max(final_scores, key=final_scores.get)
+
+    # -------------------------------------------------------
+    # 4. Logging
+    # -------------------------------------------------------
+    log_msg = (
+        f"\n[Intensity_Rec] User_ID: {user_id}\n"
+        f" - P_user (User Profile): {p_user}\n"
+        f" - P_vec2 (Context Hist): {p_vec2} (Found: {found_count} items)\n"
+        f" - Final Scores: {final_scores}\n"
+        f" -> Selected: {selected_intensity}"
+    )
+    logger.info(log_msg)
+
+    return selected_intensity

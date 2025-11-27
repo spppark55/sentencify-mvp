@@ -23,7 +23,8 @@ from app.services.classifier_service import ClassifierService
 from app.services.logger import MongoLogger
 from app.utils.embedding import get_embedding, embedding_service
 from app.utils.scoring import calculate_alpha, calculate_maturity_score
-from app.services.recommendation_service import recommend_intensity_by_similarity
+from collections import defaultdict
+from app.services.recommendation_service import recommend_intensity
 from app.qdrant.client import get_qdrant_client
 
 load_dotenv()
@@ -38,6 +39,7 @@ class RecommendRequest(BaseModel):
     language: Optional[str] = None
     intensity: Optional[str] = None
     user_prompt: Optional[str] = None
+    dev_mode: Optional[bool] = False
 
 
 class RecommendOption(BaseModel):
@@ -51,6 +53,7 @@ class RecommendResponse(BaseModel):
     insert_id: str
     recommend_session_id: str
     reco_options: list[RecommendOption]
+    recommended_intensity: Optional[str] = None
     P_rule: Dict[str, float]
     P_vec: Dict[str, float]
     P_doc: Dict[str, float]
@@ -210,22 +213,39 @@ async def recommend(req: RecommendRequest, background_tasks: BackgroundTasks) ->
         traceback.print_exc()
         macro_context = None
 
-    # Intensity Recommendation (Personalization)
+    # Pre-calculate embedding for both Intensity and P_vec
+    embedding: List[float] = []
+    try:
+        embedding = get_embedding(context_full)
+    except Exception as e:
+        print(f"[ERROR] Embedding generation failed: {e}", flush=True)
+        traceback.print_exc()
+
+    # [DEV MODE] Immediate Profile Update
+    if req.dev_mode:
+        print(f"[Dev] Triggering immediate profile update for user {req.user_id}")
+        try:
+            from app.services.profile_service import ProfileService
+            # Use global mongo client if available
+            ProfileService(mongo_client=_mongo_client).update_user_profile(req.user_id)
+        except Exception as e:
+            print(f"[Dev] Profile update failed: {e}")
+            traceback.print_exc()
+
+    # Intensity Recommendation (Personalization) - Hybrid P_user + P_vec2
     recommended_intensity = "moderate"
     try:
-        if req.user_id:
-            user_collection = get_mongo_collection("users")
-            user_doc = user_collection.find_one({"user_id": req.user_id})
-            
-            if user_doc and user_doc.get("user_embedding_v1"):
-                # Use similarity search
-                recommended_intensity = recommend_intensity_by_similarity(
-                    user_embedding=user_doc["user_embedding_v1"],
-                    qdrant_client=get_qdrant_client(),
-                    mongo_user_collection=user_collection
-                )
+        q_client = get_qdrant_client()
+        
+        recommended_intensity = recommend_intensity(
+            user_id=req.user_id,
+            context_vector=embedding,
+            qdrant_client=q_client
+        )
     except Exception as e:
         print(f"[Recommend] Intensity recommendation failed: {e}")
+        traceback.print_exc()
+        recommended_intensity = "moderate" # Fallback
 
     # P_rule Calculation
     p_rule: Dict[str, float] = {}
@@ -234,9 +254,14 @@ async def recommend(req: RecommendRequest, background_tasks: BackgroundTasks) ->
     else:
         p_rule = {"thesis": 0.5, "report": 0.3, "article": 0.2}
     
+    # P_vec (Category) Calculation using pre-calculated embedding
+    p_vec: Dict[str, float] = {}
     try:
-        embedding = get_embedding(context_full)
-        p_vec = compute_p_vec(embedding, limit=15)
+        if embedding:
+            p_vec = compute_p_vec(embedding, limit=15)
+        else:
+            # Fallback if embedding failed earlier
+            p_vec = {"thesis": 0.7, "report": 0.2, "article": 0.1}
     except Exception as e:
         print(f"[ERROR] P_vec calculation failed: {e}", flush=True)
         traceback.print_exc()
@@ -357,6 +382,7 @@ async def recommend(req: RecommendRequest, background_tasks: BackgroundTasks) ->
         insert_id=insert_id,
         recommend_session_id=recommend_session_id,
         reco_options=reco_options,
+        recommended_intensity=recommended_intensity,
         P_rule=p_rule,
         P_vec=p_vec,
         P_doc=p_doc,

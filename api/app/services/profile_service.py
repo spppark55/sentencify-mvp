@@ -1,3 +1,12 @@
+from typing import Optional, List, Dict, Any
+from collections import Counter
+from datetime import datetime
+import numpy as np
+
+from pymongo import MongoClient
+
+from app.config import MONGO_URI, MONGO_DB_NAME
+from app.schemas.profile import UserProfile
 from app.services.logger import COLLECTIONS
 from app.utils.embedding import get_embedding
 
