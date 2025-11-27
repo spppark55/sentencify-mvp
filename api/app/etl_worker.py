@@ -136,6 +136,7 @@ def sync_vectors():
 
 from app.services.profile_service import ProfileService
 from app.services.sync_service import SyncService
+from app.services.etl_service import EtlService
 
 def process_training_ops():
     """
@@ -196,14 +197,33 @@ def process_training_ops():
             {"$set": {"processed_for_training": True}}
         )
 
+def run_etl_job():
+    """
+    Run the core ETL pipeline to generate H (Training Examples).
+    Scheduled: Weekly (Saturday 03:00 UTC)
+    """
+    try:
+        logger.info("Starting Weekly ETL Job...")
+        etl_service = EtlService()
+        count = etl_service.run_etl_pipeline(limit=1000)
+        logger.info(f"Weekly ETL Job Completed. Processed {count} sessions.")
+    except Exception as e:
+        logger.error(f"Weekly ETL Job Failed: {e}")
+
 def start_scheduler():
     scheduler = BlockingScheduler()
     # Run every 5 seconds for testing
     interval = int(os.getenv("ETL_INTERVAL_SECONDS", 5))
+    
+    # 1. Real-time Sync (E -> Vector, Profile Update)
     scheduler.add_job(sync_vectors, 'interval', seconds=interval)
     scheduler.add_job(process_training_ops, 'interval', seconds=interval)
     
-    logger.info(f"Starting ETL Worker Scheduler (Interval: {interval}s)...")
+    # 2. Weekly Training Data Generation (H)
+    # Every Saturday at 03:00 UTC
+    scheduler.add_job(run_etl_job, 'cron', day_of_week='sat', hour=3, minute=0)
+    
+    logger.info(f"Starting ETL Worker Scheduler (Interval: {interval}s, Weekly ETL: Sat 03:00)...")
     try:
         scheduler.start()
     except (KeyboardInterrupt, SystemExit):

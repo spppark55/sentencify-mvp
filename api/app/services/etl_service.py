@@ -7,181 +7,172 @@ from typing import Any, Dict, List, Optional
 
 from pymongo import MongoClient
 
-from app.schemas.training import TrainingExample
+from app.schemas.training import TrainingExample, MatchMetrics
+from app.config import MONGO_URI, MONGO_DB_NAME
 
-MONGO_URI = os.getenv("MONGO_URI", "mongodb://mongo:27017")
-MONGO_DB_NAME = os.getenv("MONGO_DB_NAME", "sentencify")
+class EtlService:
+    def __init__(self, mongo_client: Optional[MongoClient] = None):
+        self.client = mongo_client or MongoClient(MONGO_URI)
+        self.db = self.client[MONGO_DB_NAME]
+        
+        # Input Collections
+        self.col_a = self.db["editor_recommend_options"]
+        self.col_b = self.db["editor_run_paraphrasing"]
+        self.col_c = self.db["editor_selected_paraphrasing"]
+        self.col_d = self.db["correction_history"]
+        self.col_e = self.db["context_block"]
+        
+        # Output Collection
+        self.col_h = self.db["training_examples"]
 
+    def process_session(self, session_id: str) -> bool:
+        """
+        Processes a single session to generate a Training Example (H).
+        Can be called by background worker immediately after C log is saved.
+        """
+        if not session_id:
+            return False
 
-def _build_pipeline() -> List[Dict[str, Any]]:
-    return [
-        {
-            "$match": {"was_accepted": True}
-        },
-        {
-            "$lookup": {
-                "from": "log_a_recommend",
-                "localField": "recommend_session_id",
-                "foreignField": "recommend_session_id",
-                "as": "log_a",
-            }
-        },
-        {
-            "$lookup": {
-                "from": "log_b_run",
-                "localField": "recommend_session_id",
-                "foreignField": "recommend_session_id",
-                "as": "log_b",
-            }
-        },
-        {
-            "$lookup": {
-                "from": "correction_history",
-                "localField": "recommend_session_id",
-                "foreignField": "recommend_session_id",
-                "as": "log_d",
-            }
-        },
-        {
-            "$lookup": {
-                "from": "context_block_store",
-                "localField": "context_hash",
-                "foreignField": "context_hash",
-                "as": "log_e",
-            }
-        },
-        {
-            "$lookup": {
-                "from": "document_context_cache",
-                "localField": "doc_id",
-                "foreignField": "doc_id",
-                "as": "log_f",
-            }
-        },
-    ]
-
-
-def _parse_timestamp(entry: Optional[Dict[str, Any]]) -> float:
-    if not entry:
-        return 0.0
-    created_at = entry.get("created_at")
-    if created_at:
         try:
-            return datetime.fromisoformat(
-                str(created_at).replace("Z", "+00:00")
-            ).timestamp()
-        except (TypeError, ValueError):
-            pass
-    time_value = entry.get("time")
-    if isinstance(time_value, (int, float)):
-        return float(time_value) / 1000
-    return 0.0
+            # 1. Fetch Logs
+            log_c = self.col_c.find_one({"recommend_session_id": session_id})
+            if not log_c:
+                print(f"[ETL] Log C not found for session {session_id}")
+                return False
 
+            log_a = self.col_a.find_one({"recommend_session_id": session_id})
+            log_b = self.col_b.find_one({"recommend_session_id": session_id})
+            log_d = self.col_d.find_one({"recommend_session_id": session_id})
+            
+            # Link A -> E via context_hash
+            log_e = None
+            if log_a and "context_hash" in log_a:
+                log_e = self.col_e.find_one({"context_hash": log_a["context_hash"]})
 
-def _calc_consistency(log_a: Dict[str, Any], log_b: Dict[str, Any], log_c: Dict[str, Any]) -> str:
-    if not log_a or not log_b:
-        return "low"
-    
-    # 1. Check if source_recommend_event_id matches
-    if log_b.get("source_recommend_event_id") != log_a.get("insert_id"):
-        return "low"
-    if log_c.get("source_recommend_event_id") != log_a.get("insert_id"):
-        return "low"
+            # 2. Transform
+            example = self._transform_to_example(log_c, log_a, log_b, log_d, log_e)
+            
+            if not example:
+                print(f"[ETL] Transformation failed for session {session_id} (Missing A log?)")
+                return False
 
-    # 2. Check time difference
-    ts_a = _parse_timestamp(log_a)
-    ts_b = _parse_timestamp(log_b)
-    if ts_a == 0 or ts_b == 0:
-        return "low"
-    if abs(ts_a - ts_b) > 60: # a와 b 사이 간격이 60초 초과 시 low
-        return "low"
+            # 3. Load (Upsert)
+            self.col_h.update_one(
+                {"recommend_session_id": session_id},
+                {"$set": example.model_dump()},
+                upsert=True
+            )
+
+            # 4. Mark as Processed (Flagging)
+            self.col_c.update_one(
+                {"recommend_session_id": session_id},
+                {"$set": {"processed_for_training": True}}
+            )
+            
+            print(f"[ETL] Successfully created Training Example for session {session_id}")
+            return True
+
+        except Exception as e:
+            print(f"[ETL] Error processing session {session_id}: {e}")
+            return False
+
+    def run_etl_pipeline(self, limit: int = 100) -> int:
+        """
+        Batch processing: Find unprocessed C logs and process them.
+        """
+        # Process unprocessed logs first
+        cursor = self.col_c.find({"processed_for_training": {"$ne": True}}).sort("created_at", 1).limit(limit)
+        count = 0
+        for log_c in cursor:
+            sid = log_c.get("recommend_session_id")
+            if sid:
+                if self.process_session(sid):
+                    count += 1
+        return count
+
+    def _transform_to_example(
+        self, 
+        c: Dict, 
+        a: Optional[Dict], 
+        b: Optional[Dict], 
+        d: Optional[Dict], 
+        e: Optional[Dict]
+    ) -> Optional[TrainingExample]:
         
-    return "high"
+        if not a:
+            # A log is mandatory for 'reco_options' and inputs
+            return None
 
-
-def _get_groundtruth(row: Dict[str, Any], log_d: Optional[Dict[str, Any]], log_b: Optional[Dict[str, Any]]) -> Optional[str]:
-    return (
-        row.get("field")
-        or (log_d or {}).get("field")
-        or (log_b or {}).get("target_category")
-    )
-
-
-def _parse_bool(value: Any) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        return value.strip().lower() == "true"
-    return bool(value)
-
-
-def run_etl_pipeline(mongo_client: MongoClient | None = None) -> int:
-    client = mongo_client or MongoClient(MONGO_URI)
-    db = client[MONGO_DB_NAME]
-    log_c = db["log_c_select"]
-    training_examples = db["training_examples"]
-
-    processed = 0
-    # Add was_accepted:true filter here for efficiency
-    pipeline = [{"$match": {"was_accepted": True}}] + _build_pipeline()
-    
-    for row in log_c.aggregate(pipeline):
-        log_a = (row.get("log_a") or [None])[0]
-        log_b = (row.get("log_b") or [None])[0]
-        log_d = (row.get("log_d") or [None])[0]
-        log_e = (row.get("log_e") or [None])[0]
-        log_f = (row.get("log_f") or [None])[0]
-
-        consistency_flag = _calc_consistency(log_a or {}, log_b or {}, row)
+        # --- Extract Features ---
+        reco_options = a.get("reco_options", [])
+        top_reco = reco_options[0] if reco_options else {}
         
-        # Rule 4.3: Use only high consistency data for training
-        if consistency_flag != "high":
-            continue
-
-        example_id = row.get("recommend_session_id") or str(uuid.uuid4())
-
-        reco_options = (log_a or {}).get("reco_options") or []
-        reco_category_input = reco_options[0].get("category") if reco_options else None
-
-        example = TrainingExample(
-            example_id=example_id,
-            recommend_session_id=row.get("recommend_session_id"),
-            consistency_flag=consistency_flag,
-            context_embedding=(log_e or {}).get("embedding") or [],
-            macro_category_hint=(log_f or {}).get("macro_category_hint"),
-            reco_category_input=reco_category_input,
-            groundtruth_field=_get_groundtruth(row, log_d, log_b),
-            was_accepted=_parse_bool(row.get("was_accepted")),
-            doc_id=row.get("doc_id"),
-            context_hash=row.get("context_hash"),
-            source_recommend_event_id=row.get("source_recommend_event_id"),
-            selected_index=row.get("index"),
-            selected_sentence_id=row.get("selected_sentence_id"),
-            total_paraphrasing_sentence_count=row.get("total_paraphrasing_sentence_count"),
-            maintenance=row.get("maintenance"),
-            target_language=row.get("target_language"),
-            tone=(log_b or {}).get("tone"),
-            llm_provider=(log_b or {}).get("llm_provider"),
-            response_time_ms=(log_b or {}).get("response_time_ms"),
-            was_shadow_mode=(log_a or {}).get("is_shadow_mode"),
-            P_vec=(log_a or {}).get("P_vec") or {},
-            P_doc=(log_a or {}).get("P_doc") or {},
-            applied_weight_doc=(log_a or {}).get("applied_weight_doc") or 0.0,
-            doc_maturity_score=(log_a or {}).get("doc_maturity_score") or 0.0,
-            created_at=datetime.utcnow(),
+        # Metrics Calculation
+        final_category = d.get("field") if d else (b.get("target_category") if b else None)
+        final_intensity = d.get("intensity") if d else (b.get("target_intensity") if b else None)
+        
+        is_cat_match = (top_reco.get("category") == final_category) if final_category else False
+        is_int_match = (top_reco.get("intensity") == final_intensity) if final_intensity else False
+        
+        match_metrics = MatchMetrics(
+            is_category_match=is_cat_match,
+            is_intensity_match=is_int_match,
+            match_score=int(is_cat_match) + int(is_int_match),
+            winner_engine="hybrid" # Placeholder logic
         )
 
-        training_examples.update_one(
-            {"example_id": example.example_id},
-            {"$set": example.model_dump()},
-            upsert=True,
+        # Ground Truth Text
+        gt_text = None
+        if d:
+            outputs = d.get("output_sentences", [])
+            idx = d.get("selected_index", 0)
+            if idx is not None and isinstance(outputs, list) and 0 <= idx < len(outputs):
+                gt_text = outputs[idx]
+        elif c:
+            # Fallback to C if D missing (legacy)
+            gt_text = c.get("selected_text") or c.get("selected_candidate_text")
+
+        # Embedding: Prioritize D (Dual-Write) -> E (Context Block)
+        embedding = []
+        if d and d.get("context_embedding"):
+            embedding = d.get("context_embedding")
+        elif e and e.get("embedding"):
+            embedding = e.get("embedding")
+
+        # ID
+        ex_id = c.get("recommend_session_id") or str(uuid.uuid4())
+
+        return TrainingExample(
+            example_id=ex_id,
+            recommend_session_id=c.get("recommend_session_id"),
+            user_id=c.get("user_id", "unknown"),
+            doc_id=c.get("doc_id"),
+            
+            # Inputs
+            context_embedding=embedding,
+            input_context=d.get("input_sentence") if d else c.get("original_text"),
+            
+            # Scores
+            reco_scores_vec=a.get("P_vec", {}),
+            reco_scores_doc=a.get("P_doc", {}),
+            reco_scores_rule=a.get("P_rule", {}),
+            reco_options=reco_options,
+            
+            # Actions (B)
+            executed_target_category=b.get("target_category") if b else None,
+            executed_target_intensity=b.get("target_intensity") if b else None,
+            executed_target_language=b.get("target_language") if b else None,
+            llm_provider=b.get("llm_provider") if b else None,
+            response_time_ms=b.get("response_time_ms") if b else None,
+            
+            # Labels (C/D)
+            was_accepted=c.get("was_accepted", False),
+            selected_option_index=c.get("index") if c.get("index") is not None else c.get("selected_option_index"),
+            groundtruth_field=final_category,
+            groundtruth_intensity=final_intensity,
+            groundtruth_text=gt_text,
+            
+            match_metrics=match_metrics,
+            consistency_flag="high",
+            created_at=datetime.utcnow()
         )
-        processed += 1
-
-    return processed
-
-
-if __name__ == "__main__":
-    print("Starting ETL Pipeline...")
-    count = run_etl_pipeline()
-    print(f"ETL Pipeline completed. Processed {count} records.")
