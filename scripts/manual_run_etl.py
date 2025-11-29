@@ -4,7 +4,8 @@ import logging
 from pathlib import Path
 
 # Ensure project root is in python path for imports
-sys.path.append(str(Path(__file__).parent.parent / "api"))
+# In Docker container, WORKDIR is /app, so adding /app allows 'import app.services...'
+sys.path.append("/app")
 
 from app.services.etl_service import EtlService
 
