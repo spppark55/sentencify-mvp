@@ -14,7 +14,7 @@ COLLECTION_NAME = "user_profile"
 
 # Path to JSON data (Relative to project root when running via scripts)
 # Assuming /app/data/import inside docker, or relative path locally
-DATA_FILE_PATH = Path("/app/data/import/user_profile.json")
+DATA_FILE_PATH = Path("/app/data/user_profile.json")
 
 def import_user_profile():
     print(f"Connecting to MongoDB: {MONGO_URI}")
@@ -34,7 +34,7 @@ def import_user_profile():
     target_file = DATA_FILE_PATH
     if not target_file.exists():
         # Fallback for local run (relative to project root)
-        local_path = Path("data/import/user_profile.json")
+        local_path = Path("data/user_profile.json")
         if local_path.exists():
             target_file = local_path
         else:

@@ -6,7 +6,7 @@ import json
 from typing import Dict
 
 class ClassifierService:
-    def __init__(self, model_dir: str = "./models/kobert-classifier"):
+    def __init__(self, model_dir: str = "./data/models/kobert-classifier"):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model_dir = model_dir
         self.model = None

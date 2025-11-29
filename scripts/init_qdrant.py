@@ -29,7 +29,7 @@ if __name__ == "__main__":
     # 2. Context Block 초기 데이터 삽입
     print("\n[2/4] Context Block 데이터 삽입 중...")
 
-    csv_path = "/app/train_data.csv"
+    csv_path = "/app/data/train_data.csv"
     if not os.path.exists(csv_path):
         print(f"⚠️  CSV 파일 없음: {csv_path}")
         print("테스트 샘플 데이터만 생성합니다.")

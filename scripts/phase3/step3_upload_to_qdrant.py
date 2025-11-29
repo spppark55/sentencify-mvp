@@ -7,10 +7,12 @@ from typing import List, Dict, Any
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import PointStruct, VectorParams, Distance
 
-# --- Configuration ---
+# 프로젝트 루트 (scripts/phase3/../..)
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DATA_FILE_PATH = PROJECT_ROOT / "data" / "import" / "user_profile.json"
-QDRANT_HOST = "qdrant"  # Changed from 'localhost' to 'qdrant' for Docker networking
+DATA_FILE_PATH = PROJECT_ROOT / "data" / "user_profile.json"
+
+# Qdrant 설정
+QDRANT_HOST = "localhost"
 QDRANT_PORT = 6333
 COLLECTION_NAME = "user_behavior_v1"
 
