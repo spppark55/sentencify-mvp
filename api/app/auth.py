@@ -54,6 +54,8 @@ class LoginRequest(BaseModel):
 class TokenResponse(BaseModel):
   access_token: str
   token_type: str = "bearer"
+  user_id: str
+  email: str
 
 
 auth_router = APIRouter(tags=["auth"])
@@ -91,10 +93,15 @@ def login(req: LoginRequest) -> TokenResponse:
   if not password_hash or not verify_password(req.password, password_hash):
     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid credentials")
 
+  user_id = str(user.get("_id"))
   token_data = {
     "sub": req.email,
-    "user_id": str(user.get("_id")),
+    "user_id": user_id,
   }
   access_token = create_access_token(token_data)
-  return TokenResponse(access_token=access_token)
+  return TokenResponse(
+      access_token=access_token,
+      user_id=user_id,
+      email=req.email
+  )
 

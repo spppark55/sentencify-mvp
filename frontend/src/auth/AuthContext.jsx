@@ -27,7 +27,7 @@ export function AuthProvider({ children }) {
     const res = await fetch(`${AUTH_BASE}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ 'e-mail': email, password }),
+      body: JSON.stringify({ email, password }),
       credentials: 'include',
     });
 
@@ -35,7 +35,8 @@ export function AuthProvider({ children }) {
       let msg = '로그인에 실패했습니다';
       try {
         const errBody = await res.json();
-        if (errBody?.message) msg = errBody.message;
+        if (errBody?.detail) msg = errBody.detail;
+        else if (errBody?.message) msg = errBody.message;
       } catch {
         // 에러 응답이 JSON이 아니면 기본 메시지 사용
       }
@@ -53,7 +54,7 @@ export function AuthProvider({ children }) {
 
     const userData = {
       // 백엔드가 id를 내려주면 우선 사용, 아니면 임시 id
-      id: data?.id ?? crypto.randomUUID(),
+      id: data?.user_id ?? data?.id ?? crypto.randomUUID(),
       email, // 우리가 보낸 이메일 그대로 사용
       name: email.split('@')[0],
     };
@@ -69,7 +70,7 @@ export function AuthProvider({ children }) {
     const res = await fetch(`${AUTH_BASE}/auth/signup`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ 'e-mail': email, password }),
+      body: JSON.stringify({ email, password }),
       credentials: 'include',
     });
 
@@ -77,7 +78,8 @@ export function AuthProvider({ children }) {
       let msg = '회원가입에 실패했습니다';
       try {
         const errBody = await res.json();
-        if (errBody?.message) msg = errBody.message;
+        if (errBody?.detail) msg = errBody.detail;
+        else if (errBody?.message) msg = errBody.message;
       } catch {}
       throw new Error(msg);
     }

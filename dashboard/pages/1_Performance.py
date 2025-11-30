@@ -6,19 +6,21 @@ from queries.mongo import (
     get_conversion_funnel,
     get_rule_vs_vector_stats,
     get_latency_breakdown,
-    get_user_intent_stats
+    get_user_intent_stats,
+    get_total_counts,
+    get_flow_counts
 )
 
 def main():
-    st.title("Phase 1 Performance & Engagement")
-    st.caption("Focus: Funnel Conversion, Hybrid Engine Balance, Latency, User Intent")
+    st.title("Performance & Analytics")
+    st.caption("Comprehensive view of System Performance, User Insights, and ROI.")
     
     user_id = st.session_state.get("user_filter")
     if user_id:
         st.info(f"Filtering data for User: {user_id}")
 
     # --- Section 1: Paraphrasing Funnel ---
-    st.header("📉 Paraphrasing Funnel")
+    st.header("Paraphrasing Funnel")
     funnel_data = get_conversion_funnel(user_id)
     
     fig_funnel = go.Figure(go.Funnel(
@@ -44,7 +46,7 @@ def main():
     st.divider()
 
     # --- Section 2: Hybrid Engine Balance ---
-    st.header("⚖️ Hybrid Engine Balance (Rule vs Vector)")
+    st.header("Hybrid Engine Balance (Rule vs Vector)")
     
     hybrid_stats = get_rule_vs_vector_stats(user_id)
     
@@ -75,7 +77,7 @@ def main():
     st.divider()
 
     # --- Section 3: System Latency ---
-    st.header("⚡ System Latency (SLA: 300ms)")
+    st.header("System Latency (SLA: 300ms)")
     
     lat_stats = get_latency_breakdown(user_id)
     
@@ -95,7 +97,7 @@ def main():
     st.divider()
 
     # --- Section 4: User Intent ---
-    st.header("🏷️ User Intent Analysis")
+    st.header("User Intent Analysis")
     
     intent_stats = get_user_intent_stats(user_id)
     
@@ -118,6 +120,55 @@ def main():
             st.plotly_chart(fig_int, use_container_width=True)
         else:
             st.info("No intensity data.")
+
+    st.divider()
+
+    # --- Section 5: User Insights (Integrated) ---
+    st.header("User Insights")
+    
+    try:
+        totals = get_total_counts(user_id=user_id)
+        # Metric layout
+        col_u1, col_u2 = st.columns(2)
+        col_u1.metric("User Profiles (G)", f"{totals.get('G', 0):,}")
+        col_u2.metric("Clusters (J)", "Data pending")
+        
+        if totals.get("G", 0) == 0:
+            st.warning("User profile data missing.")
+        else:
+            st.success("User profile data available.")
+    except Exception:
+        st.warning("Data pending — showing mock cluster view.")
+        mock = pd.DataFrame(
+            [
+                {"cluster": "A", "users": 10, "accept_rate": 0.42},
+                {"cluster": "B", "users": 7, "accept_rate": 0.55},
+            ]
+        )
+        st.dataframe(mock, use_container_width=True)
+
+    st.divider()
+
+    # --- Section 6: ROI (Integrated) ---
+    st.header("Automation Impact & ROI")
+    
+    try:
+        roi_counts = get_flow_counts(user_id=user_id)
+        accept_rate = (
+            roi_counts.get("C_accepts", 0) / roi_counts.get("A", 1)
+            if roi_counts.get("A", 0) > 0
+            else 0.0
+        )
+        
+        col_r1, col_r2 = st.columns(2)
+        col_r1.metric("Accept Rate (C/A)", f"{accept_rate:.1%}")
+        col_r2.metric("Golden Data (H)", f"{roi_counts.get('H', 0):,}")
+        
+    except Exception:
+        st.warning("Data pending — showing mock ROI.")
+        col_r1, col_r2 = st.columns(2)
+        col_r1.metric("Accept Rate (mock)", "42.0%")
+        col_r2.metric("Golden Data (mock)", "12")
 
 if __name__ == "__main__":
     main()

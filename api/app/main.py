@@ -2,6 +2,7 @@ import hashlib
 import json
 import os
 import traceback
+import time # Added missing import
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 import uuid
@@ -201,6 +202,7 @@ def append_jsonl(filename: str, payload: Dict) -> None:
 
 @app.post("/recommend", response_model=RecommendResponse)
 async def recommend(req: RecommendRequest, background_tasks: BackgroundTasks) -> RecommendResponse:
+    start_time = time.time() # Start latency measurement
     insert_id = str(uuid.uuid4())
     recommend_session_id = str(uuid.uuid4())
 
@@ -316,6 +318,9 @@ async def recommend(req: RecommendRequest, background_tasks: BackgroundTasks) ->
     schema_version = "phase1_aie_v1"
     embedding_version = "embed_v1_stub"
 
+    # Calculate latency
+    latency_ms = (time.time() - start_time) * 1000
+
     a_event = {
         "event": "editor_recommend_options",
         "insert_id": insert_id,
@@ -328,7 +333,7 @@ async def recommend(req: RecommendRequest, background_tasks: BackgroundTasks) ->
         "context_hash": context_hash,
         "context_full_preview": context_full[:500],
         "reco_options": [o.model_dump() for o in reco_options],
-        "recommended_intensity": recommended_intensity, # Log recommendation
+        "recommended_intensity": recommended_intensity, 
         "P_rule": p_rule,
         "P_vec": p_vec,
         "P_doc": p_doc,
@@ -338,6 +343,7 @@ async def recommend(req: RecommendRequest, background_tasks: BackgroundTasks) ->
         "api_version": api_version,
         "schema_version": schema_version,
         "embedding_version": embedding_version,
+        "latency_ms": latency_ms, # Added
         "created_at": _now_iso(),
     }
     append_jsonl("a.jsonl", a_event)
@@ -359,6 +365,7 @@ async def recommend(req: RecommendRequest, background_tasks: BackgroundTasks) ->
         "model_version": model_version,
         "api_version": api_version,
         "schema_version": schema_version,
+        "latency_ms": latency_ms, # Added
         "created_at": _now_iso(),
     }
     append_jsonl("i.jsonl", i_event)

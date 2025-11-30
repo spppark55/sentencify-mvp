@@ -1,5 +1,6 @@
 import os
 import time
+import uuid
 import logging
 from datetime import datetime, timedelta, timezone
 from apscheduler.schedulers.blocking import BlockingScheduler
@@ -26,22 +27,103 @@ def get_qdrant():
 
 def sync_vectors():
     """
-    Syncs context_block (E) from Mongo to Qdrant.
-    LOGIC:
-      Only upsert E if a corresponding C event (Accepted) exists.
-      - Filter E where vector_synced=False
-      - For each E, check 'editor_selected_paraphrasing' (C)
-        where recommend_session_id == E.recommend_session_id AND was_accepted=True.
-      - If found: Upsert to Qdrant & Mark synced.
-      - If not found:
-          - If E is older than 1 hour -> Mark synced (as skipped/failed) to stop retry.
-          - If E is new -> Do nothing (wait for user action).
+    [DISABLED] Syncs context_block (E) from Mongo to Qdrant.
+    Reason: User requested to stop real-time sync for context_block.
+    context_block_v1 is now populated only via initial load (train_data.csv).
     """
+    # logger.info("Skipping sync_vectors (disabled by configuration).")
+    pass
+
+    # db = get_db()
+    # q_client = get_qdrant()
+    # collection_name = "context_block_v1" 
+
+    # # Ensure Qdrant collection exists
+    # try:
+    #     q_client.get_collection(collection_name)
+    # except Exception:
+    #     logger.info(f"Creating Qdrant collection: {collection_name}")
+    #     q_client.create_collection(
+    #         collection_name=collection_name,
+    #         vectors_config=VectorParams(size=EMBED_DIM, distance=Distance.COSINE),
+    #     )
+
+    # # Fetch pending documents
+    # pending_docs = db["context_block"].find({"vector_synced": False}).limit(50)
+    
+    # count = 0
+    # points = []
+    # doc_ids_to_sync = []
+    
+    # from app.utils.embedding import get_embedding
+
+    # for doc in pending_docs:
+    #     try:
+    #         # 1. Check Acceptance (Quality Gate)
+    #         session_id = doc.get("recommend_session_id")
+    #         is_accepted = False
+    #         if session_id:
+    #             accepted_c = db["editor_selected_paraphrasing"].find_one({
+    #                 "recommend_session_id": session_id,
+    #                 "was_accepted": True
+    #             })
+    #             if accepted_c:
+    #                 is_accepted = True
+            
+    #         if is_accepted:
+    #             text = doc.get("context_full")
+    #             if not text:
+    #                 doc_ids_to_sync.append(doc["_id"])
+    #                 continue
+                
+    #             vector = get_embedding(text) 
+                
+    #             payload = {
+    #                 "doc_id": doc.get("doc_id"),
+    #                 "user_id": doc.get("user_id"),
+    #                 "context_hash": doc.get("context_hash"),
+    #                 "content": text,
+    #                 "field": doc.get("field", "general"),
+    #                 "intensity": accepted_c.get("target_intensity") or "moderate"
+    #             }
+                
+    #             point_id = doc.get("insert_id")
+    #             points.append(PointStruct(id=point_id, vector=vector, payload=payload))
+    #             doc_ids_to_sync.append(doc["_id"])
+    #             count += 1
+    #         else:
+    #             doc_ids_to_sync.append(doc["_id"]) # Skip but mark synced
+
+    #     except Exception as e:
+    #         logger.error(f"Error processing doc {doc.get('_id')}: {e}")
+
+    # if points:
+    #     try:
+    #         q_client.upsert(collection_name=collection_name, points=points)
+    #         logger.info(f"Synced {count} accepted vectors to Qdrant.")
+    #     except Exception as e:
+    #         logger.error(f"Failed to upsert to Qdrant: {e}")
+    #         return 
+
+    # if doc_ids_to_sync:
+    #     db["context_block"].update_many(
+    #         {"_id": {"$in": doc_ids_to_sync}},
+    #         {"$set": {"vector_synced": True}}
+    #     )
+
+def sync_correction_history_weekly():
+    """
+    Weekly Sync for Correction History (D -> Qdrant).
+    Logic:
+      - Filter correction_history where vector_synced=False
+      - Embed & Upsert to Qdrant correction_history_v1
+      - Mark vector_synced=True
+    """
+    logger.info("Starting Weekly Correction History Sync...")
     db = get_db()
     q_client = get_qdrant()
-    collection_name = "context_block_v1" # Qdrant collection
+    collection_name = "correction_history_v1"
 
-    # Ensure Qdrant collection exists
     try:
         q_client.get_collection(collection_name)
     except Exception:
@@ -51,88 +133,94 @@ def sync_vectors():
             vectors_config=VectorParams(size=EMBED_DIM, distance=Distance.COSINE),
         )
 
-    # Fetch pending documents
-    pending_docs = db["context_block"].find({"vector_synced": False}).limit(50)
+    # Process in batches
+    batch_size = 100
+    total_processed = 0
     
-    count = 0
-    points = []
-    doc_ids_to_sync = [] # Will mark as True (Upserted or Skipped)
-    
-    # Import embedding utility
     from app.utils.embedding import get_embedding
 
-    now_utc = datetime.now(timezone.utc)
+    while True:
+        pending_docs = list(db["correction_history"].find({"vector_synced": False}).limit(batch_size))
+        if not pending_docs:
+            break
+            
+        points = []
+        doc_ids_to_sync = [] 
 
-    for doc in pending_docs:
-        try:
-            # 1. Check Acceptance (Quality Gate)
-            session_id = doc.get("recommend_session_id")
-            
-            is_accepted = False
-            accepted_c = None
-            if session_id:
-                # Check C collection
-                accepted_c = db["editor_selected_paraphrasing"].find_one({
-                    "recommend_session_id": session_id,
-                    "was_accepted": True
-                })
-                if accepted_c:
-                    is_accepted = True
-            
-            # Decision Logic
-            if is_accepted:
-                # PROCEED TO UPSERT
-                text = doc.get("context_full")
-                if not text:
-                    logger.warning(f"E doc {doc.get('insert_id')} has no text. Skipping and marking as synced.")
+        for doc in pending_docs:
+            try:
+                original_sentence = doc.get("input_sentence") or doc.get("original_sentence")
+                if not original_sentence:
                     doc_ids_to_sync.append(doc["_id"])
                     continue
-                
-                # Re-compute embedding
-                vector = get_embedding(text) 
-                
+
+                # Check if vector already exists (unlikely for new events, but safe check)
+                if "vector" in doc and isinstance(doc["vector"], list) and len(doc["vector"]) == EMBED_DIM:
+                    vector = doc["vector"]
+                else:
+                    # Calculate embedding (This is the main purpose of this worker)
+                    vector = get_embedding(original_sentence)
+
+                # Parse User ID
+                user_data = doc.get("user")
+                user_id = "anonymous"
+                if isinstance(user_data, dict) and "$oid" in user_data:
+                    user_id = str(user_data["$oid"])
+                elif user_data:
+                    user_id = str(user_data)
+
+                # Parse Timestamp
+                ts_data = doc.get("created_at")
+                timestamp = datetime.now(timezone.utc).isoformat()
+                if isinstance(ts_data, dict) and "$date" in ts_data:
+                    timestamp = ts_data["$date"]
+                elif ts_data:
+                    timestamp = str(ts_data)
+
+                corrected_sentence = None
+                outputs = doc.get("output_sentences", [])
+                idx = doc.get("selected_index")
+                if isinstance(idx, int) and 0 <= idx < len(outputs):
+                    corrected_sentence = outputs[idx]
+                elif outputs:
+                    corrected_sentence = outputs[0]
+
                 payload = {
-                    "doc_id": doc.get("doc_id"),
-                    "user_id": doc.get("user_id"),
-                    "context_hash": doc.get("context_hash"),
-                    "content": text,
-                    "field": doc.get("field", "general"),
-                    # Fix: Add intensity from C event for P_vec2 calculation
-                    "intensity": accepted_c.get("target_intensity") or accepted_c.get("maintenance") or "moderate"
+                    "mongo_id": str(doc["_id"]), # Store original ID
+                    "user_id": user_id,
+                    "original_sentence": original_sentence,
+                    "corrected_sentence": corrected_sentence,
+                    "intensity": doc.get("intensity", "moderate"),
+                    "category": doc.get("field") or doc.get("category", "general"),
+                    "timestamp": timestamp
                 }
+
+                # Use deterministic UUID based on MongoDB _id
+                # This ensures mapping between Mongo and Qdrant
+                point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, str(doc["_id"])))
                 
-                point_id = doc.get("insert_id")
                 points.append(PointStruct(id=point_id, vector=vector, payload=payload))
                 doc_ids_to_sync.append(doc["_id"])
-                count += 1
-                
-            else:
-                # NOT ACCEPTED. Mark as skipped.
-                logger.info(f"Skipping E doc {doc.get('insert_id')} (No acceptance found). Marking as synced.")
-                doc_ids_to_sync.append(doc["_id"])
 
-        except Exception as e:
-            logger.error(f"Error processing doc {doc.get('_id')}: {e}")
+            except Exception as e:
+                logger.error(f"Error processing correction_history doc {doc.get('_id')}: {e}")
 
-    # Batch Upsert
-    if points:
-        try:
-            q_client.upsert(collection_name=collection_name, points=points)
-            logger.info(f"Synced {count} accepted vectors to Qdrant.")
-        except Exception as e:
-            logger.error(f"Failed to upsert to Qdrant: {e}")
-            # If upsert fails, do NOT mark as synced, let it retry
-            # Remove the ids that attempted upsert from doc_ids_to_sync so they retry
-            failed_point_ids = {p.id for p in points}
-            doc_ids_to_sync = [doc_id for doc_id in doc_ids_to_sync if db["context_block"].find_one({"_id": doc_id}).get("insert_id") not in failed_point_ids]
-            return # Exit to avoid marking failed upserts as synced
+        if points:
+            try:
+                q_client.upsert(collection_name=collection_name, points=points)
+                total_processed += len(points)
+            except Exception as e:
+                logger.error(f"Failed batch upsert: {e}")
+                # Do not mark as synced
+                continue
 
-    # Mark processed in Mongo
-    if doc_ids_to_sync:
-        db["context_block"].update_many(
-            {"_id": {"$in": doc_ids_to_sync}},
-            {"$set": {"vector_synced": True}}
-        )
+        if doc_ids_to_sync:
+            db["correction_history"].update_many(
+                {"_id": {"$in": doc_ids_to_sync}},
+                {"$set": {"vector_synced": True}}
+            )
+    
+    logger.info(f"Weekly Correction History Sync Completed. Processed {total_processed} items.")
 
 from app.services.profile_service import ProfileService
 from app.services.sync_service import SyncService
@@ -140,16 +228,11 @@ from app.services.etl_service import EtlService
 
 def process_training_ops():
     """
-    Fast-track ETL:
-    1. Read unprocessed B logs (Run Paraphrasing).
-    2. Update User Profile in Mongo.
-    3. Sync User Profile to Qdrant.
-    4. Mark B logs as processed.
+    Fast-track ETL for Profile Updates
     """
     db = get_db()
     q_client = get_qdrant()
     
-    # Ensure Qdrant collection for User Behavior exists (BERT 768 dim)
     behavior_coll = "user_behavior_v1"
     try:
         q_client.get_collection(behavior_coll)
@@ -163,7 +246,6 @@ def process_training_ops():
     profile_service = ProfileService(mongo_client=db.client)
     sync_service = SyncService(mongo_client=db.client, qdrant_client=q_client)
     
-    # Fetch pending B logs
     pending_b = db["editor_run_paraphrasing"].find({"processed_for_training": {"$ne": True}}).limit(50)
     
     processed_ids = []
@@ -177,20 +259,13 @@ def process_training_ops():
         except Exception as e:
             logger.error(f"Error processing B-log {doc.get('_id')}: {e}")
 
-    # Update & Sync Profiles
     for uid in users_to_update:
         try:
-            # 1. Update Mongo Profile
             profile_service.update_user_profile(uid)
-            logger.info(f"Updated profile for user {uid}")
-            
-            # 2. Sync to Qdrant
             sync_service.sync_user_to_qdrant(uid)
-            
         except Exception as e:
             logger.error(f"Failed profile update/sync for {uid}: {e}")
 
-    # Mark B logs as processed
     if processed_ids:
         db["editor_run_paraphrasing"].update_many(
             {"_id": {"$in": processed_ids}},
@@ -212,25 +287,25 @@ def run_etl_job():
 
 def start_scheduler():
     scheduler = BlockingScheduler()
-    # Run every 5 seconds for testing
     interval = int(os.getenv("ETL_INTERVAL_SECONDS", 5))
     
-    # 1. Real-time Sync (E -> Vector, Profile Update)
+    # 1. Real-time Sync
     scheduler.add_job(sync_vectors, 'interval', seconds=interval)
     scheduler.add_job(process_training_ops, 'interval', seconds=interval)
     
-    # 2. Weekly Training Data Generation (H)
-    # Every Saturday at 03:00 UTC
+    # 2. Weekly Sync: Correction History (Every Sunday 04:00 UTC)
+    scheduler.add_job(sync_correction_history_weekly, 'cron', day_of_week='sun', hour=4, minute=0)
+    
+    # 3. Weekly Training Data Gen (Every Saturday 03:00 UTC)
     scheduler.add_job(run_etl_job, 'cron', day_of_week='sat', hour=3, minute=0)
     
-    logger.info(f"Starting ETL Worker Scheduler (Interval: {interval}s, Weekly ETL: Sat 03:00)...")
+    logger.info(f"Starting ETL Worker Scheduler (RT Interval: {interval}s, Weekly Jobs Set)...")
     try:
         scheduler.start()
     except (KeyboardInterrupt, SystemExit):
         pass
 
 if __name__ == "__main__":
-    # Initialize embedding model once
     from app.utils.embedding import embedding_service
     logger.info("Loading embedding model for Worker...")
     embedding_service.load_model()

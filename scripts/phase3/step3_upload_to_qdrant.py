@@ -12,8 +12,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DATA_FILE_PATH = PROJECT_ROOT / "data" / "user_profile.json"
 
 # Qdrant 설정
-QDRANT_HOST = "localhost"
-QDRANT_PORT = 6333
+QDRANT_HOST = os.getenv("QDRANT_HOST", "localhost")
+QDRANT_PORT = int(os.getenv("QDRANT_PORT", 6333))
 COLLECTION_NAME = "user_behavior_v1"
 
 # Vector Dimensions

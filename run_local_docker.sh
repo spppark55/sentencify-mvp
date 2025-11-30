@@ -21,7 +21,32 @@ fi
 
 echo -e "${GREEN}Docker is running.${NC}"
 
-# 2. 환경 변수 확인 (OPENAI_API_KEY)
+# 2. .env 파일 자동 생성 로직
+if [ ! -f .env ]; then
+    if [ -f "data/project_api_key.txt" ]; then
+        echo -e "\n${CYAN}Found data/project_api_key.txt. Creating .env file...${NC}"
+        API_KEY=$(cat data/project_api_key.txt | tr -d '[:space:]')
+        # 만약 파일 내용이 OPENAI_API_KEY= 로 시작하지 않으면 붙여줌
+        if [[ "$API_KEY" != OPENAI_API_KEY=* ]]; then
+            echo "OPENAI_API_KEY=$API_KEY" > .env
+        else
+            echo "$API_KEY" > .env
+        fi
+        echo -e "${GREEN}.env file created successfully from data/project_api_key.txt.${NC}"
+    else
+        echo -e "\n${YELLOW}.env file not found.${NC}"
+        echo -e "${CYAN}Please enter your OpenAI API Key to run the service:${NC}"
+        read -r INPUT_KEY
+        if [ -n "$INPUT_KEY" ]; then
+            echo "OPENAI_API_KEY=$INPUT_KEY" > .env
+            echo -e "${GREEN}.env file created.${NC}"
+        else
+            echo -e "${RED}No API Key provided. Skipping .env creation (Service might fail).${NC}"
+        fi
+    fi
+fi
+
+# 3. 환경 변수 확인 (OPENAI_API_KEY)
 if [ -f .env ]; then
   echo -e "\n${CYAN}Loading environment variables from .env file...${NC}"
   export $(grep -v '^#' .env | xargs)

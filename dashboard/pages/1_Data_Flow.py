@@ -7,7 +7,7 @@ from queries import get_asset_counts, get_sankey_links
 
 
 def main():
-    st.title("Data Flow & Assets (Phase 2)")
+    st.title("Data Flow & Assets")
     st.caption("Flow of events A→B→C→H and key asset volumes.")
     user_id = st.session_state.get("user_filter")
 

@@ -607,3 +607,46 @@ def get_user_intent_stats(user_id: Optional[str] = None) -> Dict[str, Any]:
         "categories": {d["_id"]: d["count"] for d in cats if d["_id"]},
         "intensities": {d["_id"]: d["count"] for d in ints if d["_id"]}
     }
+
+
+def get_collection_names() -> List[str]:
+    """Returns a list of all collection names in the database."""
+    try:
+        return sorted(_db().list_collection_names())
+    except Exception:
+        return []
+
+
+def find_documents(collection_name: str, filter_query: Dict[str, Any], limit: int = 50) -> List[Dict[str, Any]]:
+    """
+    Fetches documents from a collection with optional filtering.
+    Sorts by created_at descending if available, otherwise natural order.
+    """
+    try:
+        # Check if created_at exists to sort by it
+        # sort_key = [("$natural", -1)]
+        
+        # Simple heuristic: most of our collections use 'created_at'
+        # We can try to sort by it, but if it doesn't exist, Mongo doesn't error on sort, just ignores or puts them at end.
+        # Safer to use _id desc which implies time for ObjectId
+        sort_key = [("_id", -1)]
+
+        cursor = _col(collection_name).find(filter_query).sort(sort_key).limit(limit)
+        
+        # Convert ObjectId and datetime to string for easier display
+        docs = []
+        for doc in cursor:
+            # Shallow copy to modify
+            d = doc.copy()
+            if "_id" in d:
+                d["_id"] = str(d["_id"])
+            # Convert common datetime fields
+            for k, v in d.items():
+                if isinstance(v, datetime):
+                    d[k] = v.isoformat()
+            docs.append(d)
+            
+        return docs
+    except Exception:
+        return []
+    

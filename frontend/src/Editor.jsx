@@ -48,47 +48,15 @@ export default function Editor({ text, setText, onSelectionChange }) {
     if (!ta) return;
 
     const value = ta.value;
-    let start = ta.selectionStart ?? 0;
-    let end = ta.selectionEnd ?? 0;
+    const start = ta.selectionStart ?? 0;
+    const end = ta.selectionEnd ?? 0;
 
-    // 드래그로 범위를 선택한 경우
+    // 드래그로 범위를 선택한 경우에만 동작
     if (start !== end) {
       const selected = value.slice(start, end);
       onSelectionChange({ text: selected, start, end });
-      return;
-    }
-
-    // 왼쪽으로 문장 시작 찾기
-    let sentStart = start;
-    while (sentStart > 0 && !isSentenceBoundaryAt(value, sentStart - 1)) {
-      sentStart--;
-    }
-
-    // 오른쪽으로 문장 끝 찾기
-    let sentEnd = end;
-    while (sentEnd < value.length && !isSentenceBoundaryAt(value, sentEnd)) {
-      sentEnd++;
-    }
-
-    // 앞뒤 공백 제거
-    while (sentStart < sentEnd && /\s/.test(value[sentStart])) {
-      sentStart++;
-    }
-    while (sentEnd > sentStart && /\s/.test(value[sentEnd - 1])) {
-      sentEnd--;
-    }
-
-    // 실제로 선택할 문장이 있으면 selection 설정 + 상위로 전달
-    if (sentEnd > sentStart) {
-      ta.setSelectionRange(sentStart, sentEnd);
-      const selectedSentence = value.slice(sentStart, sentEnd);
-      onSelectionChange({
-        text: selectedSentence,
-        start: sentStart,
-        end: sentEnd,
-      });
     } else {
-      // 문장을 못 찾은 경우(맨 처음/끝 등) → selection 비우기
+      // 단순 클릭(커서 이동) 시 선택 해제
       onSelectionChange({ text: '', start, end });
     }
   };

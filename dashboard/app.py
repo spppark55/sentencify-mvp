@@ -19,13 +19,13 @@ from queries import (
 
 st.set_page_config(
     page_title="Sentencify Control Tower",
-    page_icon="🛰️",
     layout="wide",
 )
 
 
 def _fmt_health(name: str, status: bool) -> str:
-    return f"{'🟢' if status else '🔴'} {name}"
+    state = "[Online]" if status else "[Offline]"
+    return f"**{name}**: {state}"
 
 
 def _render_health() -> None:
@@ -60,7 +60,7 @@ def _sidebar_controls() -> Optional[str]:
     user_id = st.sidebar.text_input("User ID Filter (optional)")
     st.session_state["user_filter"] = user_id or None
 
-    auto = st.sidebar.toggle("Auto-Refresh (5s)", value=True)
+    auto = st.sidebar.toggle("Auto-Refresh (5s)", value=False)
     if auto:
         time.sleep(5)
         st.rerun()
@@ -71,7 +71,7 @@ def _sidebar_controls() -> Optional[str]:
 
 
 def _render_phase1_5_stats(user_id: Optional[str]):
-    st.markdown("### 🧬 Phase 1.5 Hybrid Performance (Micro vs Macro)")
+    # st.markdown("### Phase 1.5 Hybrid Performance (Micro vs Macro)")
     
     col1, col2 = st.columns(2)
     
@@ -118,7 +118,7 @@ def main() -> None:
     st.divider()
 
     # Main Content: Live Activity Stream
-    st.markdown("### 📡 Live Activity Stream (All Events)")
+    st.markdown("### Live Activity Stream (All Events)")
     
     stream_data = get_recent_activity_stream(limit=20, user_id=user_id)
     

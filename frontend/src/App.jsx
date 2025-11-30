@@ -8,14 +8,14 @@ import OptionPanel from './OptionPanel.jsx';
 import { logEvent } from './utils/logger.js';
 import DebugPanel from './DebugPanel.jsx';
 // HEAD의 실제 API 함수들과 Frontend의 Auth/Login 컴포넌트를 모두 가져옴
-import { createDocument, postRecommend, postParaphrase, updateDocument } from './utils/api.js';
+import { createDocument, postRecommend, postParaphrase, updateDocument, getDocuments, deleteDocument } from './utils/api.js';
 import { useAuth } from './auth/AuthContext.jsx';
 import Login from './auth/Login.jsx';
 
-const STORAGE_KEY = 'editor:docs:v1'; // Frontend의 키 사용
+const STORAGE_KEY = 'editor:docs:v2'; // Cache invalidation for new version
 
 // 프론트 개발 모드에서 로그인 생략할지 여부
-const DEV_BYPASS_LOGIN = true;
+const DEV_BYPASS_LOGIN = false;
 
 export default function App() {
   // AuthContext 사용 (Frontend)
@@ -140,6 +140,48 @@ export default function App() {
     });
   }, [text, currentId]);
 
+  // [Server Sync] Fetch docs from server on login
+  useEffect(() => {
+    if (!userId) return;
+
+    const fetchDocs = async () => {
+      try {
+        const serverDocs = await getDocuments(userId);
+        
+        const formattedDocs = serverDocs.map(d => ({
+          id: d.doc_id,
+          title: makeTitle(d.latest_full_text),
+          text: d.latest_full_text || '',
+          updatedAt: d.last_synced_at || new Date().toISOString()
+        }));
+
+        if (formattedDocs.length > 0) {
+          setDocs(formattedDocs);
+          
+          // Switch to a valid server document if currentId is stale
+          const isValidCurrent = formattedDocs.find(d => d.id === currentId);
+          
+          if (!currentId || !isValidCurrent) {
+            const first = formattedDocs[0];
+            setCurrentId(first.id);
+            setDocId(first.id);
+            setText(first.text);
+          } else {
+            // Sync text content for the current doc
+            setText(isValidCurrent.text);
+          }
+        } else {
+          // Server has no docs -> Auto-create new draft
+          handleNewDraft();
+        }
+      } catch (err) {
+        console.error('Failed to fetch documents from server', err);
+      }
+    };
+
+    fetchDocs();
+  }, [userId]);
+
   useEffect(() => {
     if (!docId || !userId) return;
 
@@ -161,8 +203,8 @@ export default function App() {
   // 새 문서 (Frontend)
   const handleNewDraft = async () => {
     if (!userId) {
-      alert('사용자 정보를 확인할 수 없어 새 문서를 만들 수 없습니다.');
-      return;
+      // alert('사용자 정보를 확인할 수 없어 새 문서를 만들 수 없습니다.');
+      return; // Silent fail for auto-creation
     }
 
     try {
@@ -179,7 +221,7 @@ export default function App() {
       resetSelectionState();
     } catch (err) {
       console.error('서버 문서 생성 실패', err);
-      alert('새 문서를 생성하지 못했습니다. 잠시 후 다시 시도해 주세요.');
+      // alert('새 문서를 생성하지 못했습니다. 잠시 후 다시 시도해 주세요.');
     }
   };
 
@@ -205,10 +247,8 @@ export default function App() {
         nextCurrentId = nextDocs[0].id;
         nextText = nextDocs[0].text || '';
       } else {
-        const newId = uuidv4();
-        const blankDoc = { id: newId, title: '새 문서', text: '', updatedAt: new Date().toISOString() };
-        nextDocs = [blankDoc];
-        nextCurrentId = newId;
+        // Don't create locally, rely on auto-create effect or manual
+        nextCurrentId = null; 
         nextText = '';
       }
     }
@@ -280,7 +320,7 @@ export default function App() {
 
     if (!docId || !userId) {
       console.warn('추천 API 호출 불가: docId 또는 userId 없음');
-      alert('문서 또는 사용자 정보가 없어 추천을 실행할 수 없습니다.');
+      // alert('문서 또는 사용자 정보가 없어 추천을 실행할 수 없습니다.');
       return;
     }
 
@@ -354,7 +394,7 @@ export default function App() {
       });
     } catch (err) {
       console.error('Failed to call /recommend', err);
-      alert('추천 API 호출에 실패했습니다. 잠시 후 다시 시도해 주세요.');
+      // alert('추천 API 호출에 실패했습니다. 잠시 후 다시 시도해 주세요.');
     }
   };
 
@@ -367,7 +407,7 @@ export default function App() {
 
     if (!docId || !userId) {
       console.warn('교정 API 호출 불가: docId 또는 userId 없음');
-      alert('문서 또는 사용자 정보를 확인한 뒤 다시 시도해 주세요.');
+      // alert('문서 또는 사용자 정보를 확인한 뒤 다시 시도해 주세요.');
       return;
     }
 
@@ -416,8 +456,8 @@ export default function App() {
         tone: 'normal',
         platform: 'web',
         trigger: isRerun ? 'rerun_click' : 'button_click',
-        llm_name: 'gemini-2.5-flash',
-        llm_provider: 'google',
+        llm_name: 'gpt-4.1-nano',
+        llm_provider: 'openai',
         response_time_ms: elapsed,
         candidate_count: list.length,
       });
@@ -467,20 +507,12 @@ export default function App() {
       target_language: resolvedLanguage,
       selected_candidate_text: candidate,
       final_category: category,
+      // Include original text for dual-write logic
+      original_text: originalText, 
+      selected_text: candidate,
     });
 
     console.log("✅ [Frontend] Sent acceptance log for index:", index);
-
-    logEvent({
-      event: 'editor_selected_paraphrasing',
-      history_id: uuidv4(),
-      user_id: effectiveUser?.id,
-      doc_id: docId,
-      original_text: originalText,
-      selected_text: candidate,
-      was_accepted: true,
-      created_at: new Date().toISOString(),
-    });
   };
 
   if (!effectiveUser) {

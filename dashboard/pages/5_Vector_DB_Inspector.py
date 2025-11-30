@@ -4,9 +4,9 @@ import plotly.express as px
 from sklearn.decomposition import PCA
 from queries.qdrant import get_collections, get_collection_info, scroll_points
 
-st.set_page_config(page_title="Vector DB Inspector", page_icon="🔍", layout="wide")
+st.set_page_config(page_title="Vector DB Inspector", layout="wide")
 
-st.title("🔍 Vector DB Inspector (Qdrant)")
+st.title("Vector DB Inspector (Qdrant)")
 st.caption("Inspect vector collections, stats, and visualize embeddings.")
 
 # 1. Sidebar: Collection Selection
@@ -32,7 +32,7 @@ if info:
 st.divider()
 
 # 3. Data Preview & Visualization
-tab1, tab2 = st.tabs(["📋 Data Preview", "🌌 Embedding Space"])
+tab1, tab2 = st.tabs(["Data Preview", "Embedding Space"])
 
 # Fetch Data
 points = scroll_points(selected_col, limit=300) # Limit for perf
