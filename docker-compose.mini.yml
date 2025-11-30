@@ -2,22 +2,54 @@ version: "3.9"
 
 services:
   api:
-    build: ./api
+    build:
+      context: .
+      dockerfile: api/Dockerfile
     ports:
       - "8000:8000"
     environment:
-      KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
       MONGO_URI: "mongodb://mongo:27017"
       QDRANT_HOST: "qdrant"
       QDRANT_PORT: "6333"
       REDIS_HOST: "redis"
+      # GEMINI_API_KEY: "${GEMINI_API_KEY}"
+      OPENAI_API_KEY: "${OPENAI_API_KEY}"
+      TZ: "Asia/Seoul" # Added for timezone synchronization
+      RUN_INIT: "true" # Auto-run data import on startup
     depends_on:
-      - kafka
       - mongo
       - qdrant
       - redis
     volumes:
-      - ../:/workspace
+      - ./api/app:/app/app
+      - ./scripts:/app/scripts
+      - ./data/train_data.csv:/app/data/train_data.csv
+      - ./data:/app/data # Added to access import data
+      - ./data/models:/app/data/models
+      - /etc/localtime:/etc/localtime:ro # Added for timezone synchronization
+    networks:
+      - sentencify-net
+
+  etl:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    command: python -m app.etl_worker
+    environment:
+      MONGO_URI: "mongodb://mongo:27017"
+      MONGO_DB_NAME: "sentencify"
+      QDRANT_HOST: "qdrant"
+      QDRANT_PORT: "6333"
+      EMBED_DIM: "768"
+      TZ: "Asia/Seoul"
+    depends_on:
+      - mongo
+      - qdrant
+    volumes:
+      - ./api/app:/app/app
+      - ./scripts:/app/scripts
+      - ./data/models:/app/data/models
+      - /etc/localtime:/etc/localtime:ro
     networks:
       - sentencify-net
 
@@ -33,6 +65,9 @@ services:
       # [중요] /app/node_modules는 마운트에서 제외하여,
       # 컨테이너 내부의 node_modules를 사용 (성능 및 호환성)
       - /app/node_modules
+      - /etc/localtime:/etc/localtime:ro # Added for timezone synchronization
+    environment: # Added for timezone synchronization
+      TZ: "Asia/Seoul"
     networks:
       - sentencify-net
     depends_on:
@@ -40,26 +75,25 @@ services:
     command: >
       sh -c "npm install && npm run dev -- --host 0.0.0.0"
 
-
-  kafka:
-    image: apache/kafka:latest
+  dashboard:
+    build:
+      context: ./dashboard
+      dockerfile: Dockerfile
     ports:
-      - "9092:9092"
-      - "9093:9093"
+      - "8501:8501"
     environment:
-      KAFKA_ENABLE_KRAFT: "yes"
-      KAFKA_CFG_PROCESS_ROLES: "broker,controller"
-      KAFKA_CFG_NODE_ID: "1"
-      KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: "1@kafka:9094"
-      KAFKA_CFG_LISTENERS: "PLAINTEXT://:9092,PLAINTEXT_HOST://:9093,CONTROLLER://:9094"
-      KAFKA_CFG_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:9093"
-      KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: "PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT,CONTROLLER:PLAINTEXT"
-      KAFKA_CFG_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
-      KAFKA_CFG_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
+      MONGO_URI: "mongodb://mongo:27017"
+      REDIS_HOST: "redis"
+      TZ: "Asia/Seoul"
     volumes:
-      - kafka-data:/tmp/kafka-logs
+      - ./dashboard:/app
+      - /etc/localtime:/etc/localtime:ro
     networks:
       - sentencify-net
+    depends_on:
+      - api
+      - mongo
+      - redis
 
   mongo:
     image: mongo:6.0
@@ -67,6 +101,11 @@ services:
       - "27017:27017"
     volumes:
       - mongo-data:/data/db
+      - ./docker/mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js:ro
+      - ./data:/data/import:ro
+      - /etc/localtime:/etc/localtime:ro # Added for timezone synchronization
+    environment: # Added for timezone synchronization
+      TZ: "Asia/Seoul"
     networks:
       - sentencify-net
 
@@ -77,6 +116,9 @@ services:
       - "6334:6334"
     volumes:
       - qdrant-data:/qdrant/storage
+      - /etc/localtime:/etc/localtime:ro # Added for timezone synchronization
+    environment: # Added for timezone synchronization
+      TZ: "Asia/Seoul"
     networks:
       - sentencify-net
 
@@ -84,6 +126,10 @@ services:
     image: redis:7
     ports:
       - "6379:6379"
+    environment: # Added for timezone synchronization
+      TZ: "Asia/Seoul"
+    volumes:
+      - /etc/localtime:/etc/localtime:ro # Added for timezone synchronization
     networks:
       - sentencify-net
 
@@ -92,6 +138,5 @@ networks:
     driver: bridge
 
 volumes:
-  kafka-data:
   mongo-data:
   qdrant-data:

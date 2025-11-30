@@ -85,32 +85,34 @@
 **구체 작업:**
 
 1. **Pydantic 스키마 정식화**
-    - [ ]  `RecommendRequest`에 최소 필드 추가
+    - [x]  `RecommendRequest`에 최소 필드 추가  
         - `doc_id: str`
         - `user_id: Optional[str]`
-        - `context_full: str` (드래그한 문단 전체)
-        - `field`, `intensity`, `language`, `tone` 등 옵션.
-    - [ ]  `RecommendResponse`에
+        - `selected_text: str`
+        - `context_prev/context_next` (서버에서 `context_full` 조립)
+        - `field`, `intensity`, `language`, `user_prompt` 등 옵션.
+    - [x]  `RecommendResponse`에
         - `insert_id`, `recommend_session_id`, `options` 배열
         - (선택) `P_rule`, `P_vec` 요약 score 추가.
 2. **ID/Hash 생성 로직 구현**
-    - [ ]  `recommend_session_id` 생성 (uuid4 등).
-    - [ ]  `insert_id` 생성 (Mixpanel 호환 포맷이면 더 좋음, 추측입니다).
-    - [ ]  `context_hash = hash(doc_id + context_full)` 구현 (sha256 등).
+    - [x]  `recommend_session_id` 생성 (uuid4 등).
+    - [x]  `insert_id` 생성 (uuid4 기반 Stub).
+    - [x]  `context_hash = hash(doc_id + context_full)` 구현 (sha256 등).
 3. **P_rule / P_vec Stub**
-    - [ ]  간단한 rule 기반 (keyword → field 매핑)으로 `P_rule` 딕셔너리 리턴.
-    - [ ]  Qdrant를 아직 안 써도 되지만, 인터페이스는
+    - [x]  (Stub) 간단한 딕셔너리 기반 `P_rule` 리턴.
+    - [x]  Qdrant를 아직 안 써도 되지만, 인터페이스는
         - `P_vec = {"thesis": 0.5, "report": 0.3, ...}` 형식으로 Stub 구현.
     - 나중에 Step 3에서 실제 Qdrant 검색으로 바꾸기.
 4. **Kafka Producer 연동 (A / I / E 이벤트)**
-    - [ ]  `A_editor_recommend_options` 이벤트 발행
+    - [x]  `A_editor_recommend_options` 이벤트 발행
         - payload에 `insert_id`, `recommend_session_id`, `doc_id`, `context_hash`, `P_rule`, `P_vec`, 선택된 `reco_category_input` 포함.
-    - [ ]  `I_recommend_log` 이벤트 발행
+    - [x]  `I_recommend_log` 이벤트 발행
         - 모델 내부 score / weight 로그용 (간단히 P_rule, P_vec, 최종 weight 정도만 먼저).
-    - [ ]  `E_context_block_log` 또는 `E.context_block`용 이벤트 발행
+    - [x]  `E_context_block_log` 또는 `E.context_block`용 이벤트 발행
         - Qdrant에 저장할 `context_full`, `doc_id`, `context_hash`, `field`, `intensity` 등 포함.
 5. **환경변수 사용**
-    - [ ]  `KAFKA_BOOTSTRAP_SERVERS`, `MONGO_URI`, `QDRANT_HOST`, `QDRANT_PORT`, `REDIS_HOST`를 `main.py`에서 실제로 읽어 사용.
+    - [x]  `KAFKA_BOOTSTRAP_SERVERS`를 `main.py`에서 실제로 읽어 Kafka Producer 설정에 사용.
+    - [ ]  (추가 예정) `MONGO_URI`, `QDRANT_HOST`, `QDRANT_PORT`, `REDIS_HOST`를 컨슈머/헬퍼 코드에서 사용.
 
 ---
 
@@ -122,7 +124,8 @@ Phase1이 요구하는 **D, E, K + LLM 캐시**를 로컬에서 다루게 만들
 
 1. **Mongo 스크립트**
     - [ ]  `4_문장교정기록.json` → `sentencify.correction_history`로 import (D).
-    - [ ]  `full_document_store`(K) 컬렉션 생성 + index(doc_id) 생성.
+    - [x]  `full_document_store`(K) 컬렉션 생성 + index(doc_id) 생성.  
+          → `docker/mongo-init.js`에서 컬렉션 및 인덱스 자동 생성.
     - [ ]  (선택) 기업 1~3 JSON도 `usage_summary`, `client_properties`, `event_raw` 컬렉션에 넣기 (EDA용).
 2. **Qdrant 준비**
     - [ ]  Qdrant에 `context_block_v1` 컬렉션 생성 (dim/metric은 임베딩 모델에 맞춰 설정, dim 값은 추측입니다).
@@ -142,10 +145,10 @@ Phase1이 요구하는 **D, E, K + LLM 캐시**를 로컬에서 다루게 만들
 프론트에서 실제로 `/recommend`를 호출하고, 그 결과를 기반으로 **B/C 이벤트를 발행**하는 구조를 맞추는 것.
 
 1. **/recommend 호출 연동**
-    - [ ]  `App.jsx`에 간단한 에디터 작성 (textarea + “추천 받기” 버튼).
-    - [ ]  버튼 클릭 시 `/recommend`로
-        - `doc_id`, `user_id`, `context_full`, `field`, `intensity`, `language` 전송.
-    - [ ]  응답으로 받은 `insert_id`, `recommend_session_id`, `options`를 상태로 저장.
+    - [x]  `App.jsx`에 에디터/선택 로직 구현 (textarea + 드래그 기반).
+    - [x]  선택 변경 시 `/recommend`로
+        - `doc_id`, `user_id`, `selected_text`, `context_prev/next`, `field`, `intensity`, `language` 전송.
+    - [x]  응답으로 받은 `insert_id`, `recommend_session_id`, `options`를 상태로 저장.
 2. **B 이벤트 발행 (editor_run_paraphrasing)**
     - [ ]  FE에서 실행 버튼을 누른 시점에 B 이벤트 payload 생성:
         - 기업 공통 필드 +
