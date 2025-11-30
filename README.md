@@ -2,7 +2,7 @@
 * **Docker Desktop**이 설치되어 있어야 합니다.
 
 ### 2. Setup Data
-* 제공된 `data` 폴더를 프로젝트 루트 디렉토리에 위치시켜 주세요.
+* 제공된 `data` 폴더를 프로젝트 루트 디렉토리(sentencify-mvp/)에 위치시켜 주세요.
 
 ### 3. Run Application
 OS 환경에 맞는 스크립트를 실행해 주세요.
