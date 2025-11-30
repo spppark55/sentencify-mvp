@@ -18,7 +18,34 @@ if (-not $?) {
 Write-Host "Docker is running." -ForegroundColor Green
 
 # ==========================================
-# 2. .env 파일 로드 및 환경 변수 확인
+# 2. .env 파일 자동 생성 로직
+# ==========================================
+if (-not (Test-Path ".env")) {
+    if (Test-Path "data/project_api_key.txt") {
+        Write-Host "`nFound data/project_api_key.txt. Creating .env file..." -ForegroundColor Cyan
+        $apiKey = (Get-Content "data/project_api_key.txt" -Raw).Trim()
+        
+        if ($apiKey -notmatch "^OPENAI_API_KEY=") {
+            "OPENAI_API_KEY=$apiKey" | Out-File ".env" -Encoding utf8
+        } else {
+            $apiKey | Out-File ".env" -Encoding utf8
+        }
+        Write-Host ".env file created successfully from data/project_api_key.txt." -ForegroundColor Green
+    } else {
+        Write-Host "`n.env file not found." -ForegroundColor Yellow
+        Write-Host "Please enter your OpenAI API Key to run the service:" -ForegroundColor Cyan
+        $inputKey = Read-Host
+        if (-not [string]::IsNullOrWhiteSpace($inputKey)) {
+            "OPENAI_API_KEY=$inputKey" | Out-File ".env" -Encoding utf8
+            Write-Host ".env file created." -ForegroundColor Green
+        } else {
+            Write-Host "No API Key provided. Skipping .env creation (Service might fail)." -ForegroundColor Red
+        }
+    }
+}
+
+# ==========================================
+# 3. .env 파일 로드 및 환경 변수 확인
 # ==========================================
 if (Test-Path ".env") {
     Write-Host "`nLoading environment variables from .env file..." -ForegroundColor Cyan
@@ -36,7 +63,7 @@ if (-not $env:OPENAI_API_KEY) {
 }
 
 # ==========================================
-# 3. Docker Compose 실행
+# 4. Docker Compose 실행
 # ==========================================
 Write-Host "`nStarting all services with Docker Compose..." -ForegroundColor Cyan
 Write-Host "This may take a while on the first run..."

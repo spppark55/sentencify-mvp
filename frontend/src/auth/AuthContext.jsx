@@ -35,8 +35,15 @@ export function AuthProvider({ children }) {
       let msg = '로그인에 실패했습니다';
       try {
         const errBody = await res.json();
-        if (errBody?.detail) msg = errBody.detail;
-        else if (errBody?.message) msg = errBody.message;
+        if (errBody?.detail) {
+          if (Array.isArray(errBody.detail)) {
+            msg = errBody.detail.map((e) => e.msg).join(', ');
+          } else {
+            msg = errBody.detail;
+          }
+        } else if (errBody?.message) {
+          msg = errBody.message;
+        }
       } catch {
         // 에러 응답이 JSON이 아니면 기본 메시지 사용
       }
@@ -78,8 +85,15 @@ export function AuthProvider({ children }) {
       let msg = '회원가입에 실패했습니다';
       try {
         const errBody = await res.json();
-        if (errBody?.detail) msg = errBody.detail;
-        else if (errBody?.message) msg = errBody.message;
+        if (errBody?.detail) {
+          if (Array.isArray(errBody.detail)) {
+            msg = errBody.detail.map((e) => e.msg).join(', ');
+          } else {
+            msg = errBody.detail;
+          }
+        } else if (errBody?.message) {
+          msg = errBody.message;
+        }
       } catch {}
       throw new Error(msg);
     }
